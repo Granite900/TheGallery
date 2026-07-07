@@ -34,6 +34,17 @@ export const ZONE_ORDER: ZoneId[] = [
 ];
 
 export const CONFIG = {
+  // Runtime perf knobs — see Lighting.ts's per-frame point-light culling.
+  perf: {
+    // Extra radius (metres) added past each light's own falloff `distance`
+    // before it's switched invisible — generous enough that fade-in/out
+    // is never noticeable.
+    lightCullMargin: 6,
+    // Fallback "reach" for the rare point light created with distance = 0
+    // (i.e. no falloff cap of its own).
+    lightCullFallbackDistance: 20,
+  },
+
   player: {
     walkSpeed: 3.5, // m/s
     sprintMult: 1.4,
@@ -135,7 +146,7 @@ export const CONFIG = {
    * `rates` are mean toggles per second for each flickering light.
    */
   flicker: {
-    tubeIndices: [1, 4],
+    tubeIndices: [1, 3],
     rates: [2.4, 1.6],
   },
 
@@ -153,7 +164,12 @@ export const CONFIG = {
     mazeB2: { x1: 11.9, x2: 14.1, z1: -44, z2: -38.2 } as ZoneRect,
     mazeC: { x1: 0.9, x2: 20.1, z1: -46.2, z2: -44 } as ZoneRect,
     galleryClassical: { x1: 20.1, x2: 38.1, z1: -51.1, z2: -39.1 } as ZoneRect,
-    serviceCorridor: { x1: 27.9, x2: 30.1, z1: -71.1, z2: -51.1 } as ZoneRect,
+    // A full-size copy of the lobby, dropped straight onto the mandatory path
+    // right after the mirror room (galleryClassical) and before the service
+    // corridor / exit — the déjà-vu "haven't I been here before?" beat. Same
+    // proportions and furniture as the real lobby, translated here.
+    lobbyEcho: { x1: 24, x2: 34, z1: -59.1, z2: -51.1 } as ZoneRect,
+    serviceCorridor: { x1: 27.9, x2: 30.1, z1: -71.1, z2: -59.1 } as ZoneRect,
     serviceAlcove: { x1: 30.1, x2: 31.7, z1: -62, z2: -60 } as ZoneRect,
     galleryUnlisted: { x1: 19, x2: 39, z1: -87.1, z2: -71.1 } as ZoneRect,
     exitThreshold: { x1: 27, x2: 31, z1: -91.1, z2: -87.1 } as ZoneRect,
@@ -192,23 +208,13 @@ export const CONFIG = {
       exitThreshold: { min: 0.95, max: 1.0, traverseDistance: 4 },
     } as Record<ZoneId, { min: number; max: number; traverseDistance: number }>,
 
-    // Scripted, edge-of-vision-only glimpses of the silhouette — exactly two
-    // per playthrough, each fired by a world trigger (see CorridorMaze.ts's
-    // east T-junction arm and ServiceCorridor.ts's south entrance) rather
-    // than spawned randomly. Never in the player's central view, never for
-    // more than ~a second.
+    // Scripted glimpses of the silhouette — exactly two per playthrough,
+    // each fired by a world trigger. The figure emerges from behind a real
+    // wall corner (peek animation), holds for ~1.3 s with its head turning
+    // toward the player, then retreats and fades. Only vanishes early if
+    // the player walks within 1.2 m.
     silhouette: {
-      // How far into the camera's half horizontal FOV the glimpse sits —
-      // 1.0 would be the true screen edge (risk of clipping out of frame),
-      // so this is pulled in slightly to stay just inside the corner.
-      glimpseEdgeFraction: 0.86,
-      glimpseDistance: [7, 10] as [number, number], // metres ahead along that edge direction
-      glimpseLifetimeSec: 1.1, // fades on its own after about a second either way
-      // Wide "starting to look toward it" cone (radians) and a short dwell —
-      // it fades as soon as the player's gaze swings toward it, not only
-      // once they've fixed dead-center on it.
-      lookAngle: 0.5,
-      lookAwayDwellSec: 0.12,
+      glimpseLifetimeSec: 2.5,
     },
 
     fog: {
@@ -250,7 +256,6 @@ export const CONFIG = {
       { x1: 11.9, x2: 14.1, z1: -42.0, z2: -40.0 },
     ] as ZoneRect[],
     serviceCorridor: [
-      { x1: 27.9, x2: 30.1, z1: -54.5, z2: -52.5 },
       { x1: 27.9, x2: 30.1, z1: -61.8, z2: -59.8 },
       { x1: 27.9, x2: 30.1, z1: -69.7, z2: -66.7 }, // longest, ~3m
     ] as ZoneRect[],
@@ -290,7 +295,7 @@ export const ZONE_ID_RECTS: Record<ZoneId, ZoneRect[]> = {
   galleryModern: [CONFIG.zones.galleryModern],
   corridorMaze: [CONFIG.zones.mazeA, CONFIG.zones.mazeB1, CONFIG.zones.mazeB2, CONFIG.zones.mazeC],
   galleryClassical: [CONFIG.zones.galleryClassical],
-  serviceCorridor: [CONFIG.zones.serviceCorridor, CONFIG.zones.serviceAlcove],
+  serviceCorridor: [CONFIG.zones.serviceCorridor, CONFIG.zones.serviceAlcove, CONFIG.zones.lobbyEcho],
   galleryUnlisted: [CONFIG.zones.galleryUnlisted],
   exitThreshold: [CONFIG.zones.exitThreshold],
 };

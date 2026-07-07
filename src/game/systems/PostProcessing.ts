@@ -91,6 +91,12 @@ export class PostProcessing {
   private gradePass: ShaderPass;
   private time = 0;
 
+  // brief additive "pulse" — reuses the existing dread-driven grade (more
+  // grain/vignette/CA/desat for under a second) as a restrained camera
+  // effect for the silhouette glimpses, rather than a separate shader.
+  private pulse = 0;
+  private pulseDecayRate = 0;
+
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera) {
     const size = renderer.getDrawingBufferSize(new THREE.Vector2());
     const target = new THREE.WebGLRenderTarget(size.x, size.y, {
@@ -108,10 +114,19 @@ export class PostProcessing {
     this.composer.setSize(w, h);
   }
 
+  /** A short, smoothly-decaying intensification of the grade (grain/vignette/
+   * CA/desat) — a subtle "something's wrong for a second" cue, never a flash. */
+  triggerPulse(strength = 0.32, decaySeconds = 0.7): void {
+    this.pulse = Math.max(this.pulse, strength);
+    this.pulseDecayRate = strength / decaySeconds;
+  }
+
   render(dt: number, dreadLevel = 0): void {
     this.time += dt;
+    this.pulse = Math.max(0, this.pulse - this.pulseDecayRate * dt);
+    const effectiveDread = Math.min(1, dreadLevel + this.pulse);
     this.gradePass.uniforms.uTime.value = this.time;
-    this.gradePass.uniforms.uDread.value = dreadLevel;
+    this.gradePass.uniforms.uDread.value = effectiveDread;
     this.composer.render();
   }
 }

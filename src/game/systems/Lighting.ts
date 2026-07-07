@@ -34,6 +34,13 @@ interface DarkSpotEntry {
 export class Lighting {
   private flickers: FlickerEntry[] = [];
   private darkSpots: DarkSpotEntry[] = [];
+  // Every PointLight ever created, for per-frame distance culling below —
+  // three.js re-evaluates every *visible* light for every standard-material
+  // fragment in the frame, so with 40+ fixtures spread across a ~90m museum,
+  // turning off the ones nowhere near the player meaningfully cuts shading
+  // cost without any visible difference (each light's own falloff distance
+  // already makes it contribute ~nothing out there).
+  private allPointLights: THREE.PointLight[] = [];
   private panelRimMat: THREE.MeshStandardMaterial;
   private sharedPanelMat: THREE.MeshStandardMaterial;
   private dreadFlickerMul = 1;
@@ -114,6 +121,7 @@ export class Lighting {
     const l = new THREE.PointLight(color, intensity, distance, 2);
     l.position.set(x, y, z);
     this.scene.add(l);
+    this.allPointLights.push(l);
     return l;
   }
 
@@ -194,6 +202,14 @@ export class Lighting {
         d.light.intensity = inside ? d.base * d.factor : d.base;
         d.inside = inside;
       }
+    }
+
+    const margin = CONFIG.perf.lightCullMargin;
+    for (const l of this.allPointLights) {
+      const dx = l.position.x - px;
+      const dz = l.position.z - pz;
+      const reach = (l.distance || CONFIG.perf.lightCullFallbackDistance) + margin;
+      l.visible = dx * dx + dz * dz < reach * reach;
     }
   }
 }

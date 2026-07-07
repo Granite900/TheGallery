@@ -1,10 +1,16 @@
 /**
- * Zone 5 — 20m service corridor: 2.3m ceiling, concrete floor, six
+ * Zone 5 — 12m service corridor: 2.3m ceiling, concrete floor, four
  * fluorescent tubes of which two flicker, ceiling pipes, a STAFF ONLY sign,
  * and a shallow alcove where 772-M belongs (the correct slot for that
  * misfiled landscape from the Modern Wing).
  *
- * Direct-address note #3 is adjacent to the second dark spot.
+ * The corridor now begins where the Lobby Echo ends — the game's second déjà
+ * vu beat is a full-size copy of the lobby (see zones/Lobby.ts's
+ * `buildLobbyEcho`) that the player walks through on the only path forward,
+ * right after the mirror room and before this corridor. It can't be missed or
+ * skipped like the maze's optional west-wing repeat.
+ *
+ * Direct-address note #3 is adjacent to the first dark spot.
  */
 import * as THREE from 'three';
 import { CONFIG } from '../../config';
@@ -13,7 +19,7 @@ import type { ZoneContext } from './ZoneContext';
 import { addArtistNote } from './ArtistNote';
 
 export function buildServiceCorridor(ctx: ZoneContext): void {
-  const { world, lighting, player, catalog, hud, audio, dread } = ctx;
+  const { world, lighting, catalog, hud, audio, dread } = ctx;
   const r = CONFIG.zones.serviceCorridor;
   const a = CONFIG.zones.serviceAlcove;
   const H = CONFIG.serviceCorridor.height;
@@ -36,16 +42,28 @@ export function buildServiceCorridor(ctx: ZoneContext): void {
     floor: 'concrete',
   });
 
-  // STAFF ONLY at the south entrance
+  // STAFF ONLY at the corridor mouth — the first thing seen on stepping out
+  // of the Lobby Echo and into the concrete service run.
   world.addSign({
-    x: r.x2 - 0.08, y: 1.75, z: -52.6, facing: 'w', w: 0.85, h: 0.45,
+    x: r.x2 - 0.08, y: 1.75, z: -59.7, facing: 'w', w: 0.85, h: 0.45,
     texture: signTexture(['STAFF ONLY']),
   });
 
-  // -- silhouette glimpse #2 ------------------------------------------------
-  const glimpse2 = world.addTrigger({ x1: r.x1, z1: -52.9, x2: r.x2, z2: -52.2 }, () => {
+  // -- silhouette glimpse #2: peering out of the alcove --------------------
+  // The corridor's own east wall hides the figure almost entirely — it stands
+  // just inside the alcove mouth, so only a sliver leans into view for the
+  // couple of steps where the opening lines up, then the wall corner hides it
+  // again. Fires just before the alcove so it's already there as it lines up.
+  // Trigger fires just past the painting/note area of the corridor (~z=-65).
+  // The figure stands at the very end of the service corridor, tucked against
+  // the east wall so the wall corner hides roughly half of it. It holds there,
+  // head tracking the player, until the player looks at it, then a 0.75 s timer
+  // runs and it slides off to the player's right and fades.
+  const glimpse2 = world.addTrigger({ x1: r.x1, z1: -65.5, x2: r.x2, z2: -64.5 }, () => {
     glimpse2.active = false;
-    ctx.dread.triggerGlimpse(player.getCamera(), r, [17, 19]);
+    // (30.0, -70.6): against the east wall (x=30.1) near the south end,
+    // ~half-occluded by the wall; auto-faces the player.
+    ctx.dread.triggerGlimpseAt(30.0, -70.6);
   });
 
   // ceiling pipes along the west edge
@@ -86,8 +104,8 @@ export function buildServiceCorridor(ctx: ZoneContext): void {
     ],
   });
 
-  // six tubes; two flicker (indices + rates from config)
-  const tubeZs = [-53.5, -56.5, -59.5, -62.5, -65.5, -68.5];
+  // four tubes; two flicker (indices + rates from config)
+  const tubeZs = [-60.5, -63.5, -66.5, -69.5];
   const flickerSet = new Map<number, number>();
   CONFIG.flicker.tubeIndices.forEach((idx, i) => flickerSet.set(idx, CONFIG.flicker.rates[i]));
 
@@ -104,9 +122,8 @@ export function buildServiceCorridor(ctx: ZoneContext): void {
   });
 
   const ds = CONFIG.darkSpots.serviceCorridor;
-  lighting.addDarkSpot(world, ds[0], 29, H - 0.32, -53.5);
-  lighting.addDarkSpot(world, ds[1], 29, H - 0.32, -60.8);
-  lighting.addDarkSpot(world, ds[2], 29, H - 0.32, -68.2);
+  lighting.addDarkSpot(world, ds[0], 29, H - 0.32, -60.8);
+  lighting.addDarkSpot(world, ds[1], 29, H - 0.32, -68.2);
 
   // ── Correct slot for 772-M ────────────────────────────────────────────────
   // An empty hook on the alcove's east wall with "Expected: 772-M" label.
@@ -147,9 +164,20 @@ export function buildServiceCorridor(ctx: ZoneContext): void {
   filedPaint.visible = false;
   world.scene.add(filedPaint);
 
+  // Generous invisible hit-box — the visible hook/bracket geometry is tiny
+  // (a few cm) and very hard to aim the crosshair at precisely; this proxy
+  // covers the hook, the label, and the space the painting appears in so
+  // the interaction reliably registers.
+  const slotProxy772 = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 1.0, 0.9),
+    new THREE.MeshStandardMaterial({ transparent: true, opacity: 0 }),
+  );
+  slotProxy772.position.set(a.x2 - 0.25, 1.3, -61);
+  world.scene.add(slotProxy772);
+
   // Slot interactable
   ctx.interactables.register({
-    objects: [hookGroup],
+    objects: [hookGroup, slotProxy772],
     getPrompt: () => {
       if (catalog.isCorrectlyFiled('772-M')) return null;
       if (catalog.carriedSlip === '772-M') return 'E — File correctly';

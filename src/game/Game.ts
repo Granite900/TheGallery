@@ -75,7 +75,7 @@ import { DreadSystem } from './systems/DreadSystem';
 import { DejaVuSystem } from './systems/DejaVuSystem';
 import { ArtistNotes } from './systems/ArtistNotes';
 import type { ZoneContext } from './zones/ZoneContext';
-import { buildLobby } from './zones/Lobby';
+import { buildLobby, buildLobbyEcho } from './zones/Lobby';
 import { buildEntryCorridor } from './zones/EntryCorridor';
 import { buildGalleryModern } from './zones/GalleryModern';
 import { buildCorridorMaze } from './zones/CorridorMaze';
@@ -110,7 +110,11 @@ export class Game {
   private maxDread = 0;
 
   constructor(container: HTMLElement) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    // antialias:false — the EffectComposer renders through its own
+    // WebGLRenderTarget (with `samples: 4` MSAA, see PostProcessing.ts) and
+    // blits a full-screen quad to the canvas, so the context's own default-
+    // framebuffer MSAA is never actually used and only costs memory/bandwidth.
+    this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
@@ -135,7 +139,7 @@ export class Game {
     this.world = new World(this.scene, this.interactables, this.modal, this.audio);
     this.player = new Player(this.camera, this.world, this.audio);
     this.post = new PostProcessing(this.renderer, this.scene, this.camera);
-    this.dread = new DreadSystem(this.scene, this.world, this.audio);
+    this.dread = new DreadSystem(this.scene, this.world, this.audio, this.player, this.post);
     this.dejaVu = new DejaVuSystem(this.scene, this.audio);
 
     const ctx: ZoneContext = {
@@ -159,6 +163,7 @@ export class Game {
     buildGalleryModern(ctx);
     buildCorridorMaze(ctx);
     buildGalleryClassical(ctx);
+    buildLobbyEcho(ctx); // full lobby copy on the path, right after the mirror room
     buildServiceCorridor(ctx);
     buildGalleryUnlisted(ctx);
     buildExitThreshold(ctx);

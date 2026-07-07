@@ -25,6 +25,14 @@ export class Player {
   private stepDistance = 0;
   private footstepListeners: Array<() => void> = [];
 
+  // brief camera shake (used by the silhouette glimpses) — a small,
+  // fast-decaying rotational judder, never enough to disorient
+  private shakeTimeLeft = 0;
+  private shakeDuration = 0.001;
+  private shakeIntensity = 0;
+  private shakeYaw = 0;
+  private shakePitch = 0;
+
   constructor(
     private camera: THREE.PerspectiveCamera,
     private world: World,
@@ -53,6 +61,17 @@ export class Player {
    * compute the current edge-of-view direction/FOV). */
   getCamera(): THREE.PerspectiveCamera {
     return this.camera;
+  }
+
+  /**
+   * A brief, small rotational judder — used by the silhouette glimpses as a
+   * restrained "camera effect" (not a jumpscare shake). Decays linearly to
+   * zero over `duration` seconds.
+   */
+  triggerShake(intensity = 0.014, duration = 0.35): void {
+    this.shakeIntensity = intensity;
+    this.shakeDuration = duration;
+    this.shakeTimeLeft = duration;
   }
 
   /** Subscribe to footstep events (used by DejaVuSystem's delayed echo layer). */
@@ -128,13 +147,24 @@ export class Player {
       this.bobPhase *= 1 - Math.min(1, dt * 6);
     }
 
+    if (this.shakeTimeLeft > 0) {
+      this.shakeTimeLeft = Math.max(0, this.shakeTimeLeft - dt);
+      const decay = this.shakeTimeLeft / this.shakeDuration;
+      const amt = this.shakeIntensity * decay;
+      this.shakeYaw = (Math.random() * 2 - 1) * amt;
+      this.shakePitch = (Math.random() * 2 - 1) * amt * 0.6;
+    } else {
+      this.shakeYaw = 0;
+      this.shakePitch = 0;
+    }
+
     this.syncCamera(Math.sin(this.bobPhase) * CONFIG.player.bobAmplitude * Math.min(1, moved / dt / P.walkSpeed + 0.2));
   }
 
   private syncCamera(bob: number): void {
     this.camera.rotation.order = 'YXZ';
-    this.camera.rotation.y = this.yaw;
-    this.camera.rotation.x = this.pitch;
+    this.camera.rotation.y = this.yaw + this.shakeYaw;
+    this.camera.rotation.x = this.pitch + this.shakePitch;
     this.camera.position.set(this.x, CONFIG.player.eyeHeight + bob, this.z);
   }
 }

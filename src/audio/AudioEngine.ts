@@ -172,6 +172,66 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * A cold, dissonant liminal swell — three detuned low partials (a slow,
+   * uneasy beat plus a hollow upper partial) that sink in pitch as a lowpass
+   * closes over them, under a breathy filtered-noise "presence". Accompanies
+   * the silhouette glimpses: distinctly unsettling, but slow-attack and never
+   * loud — a swell that crawls up and sinks away, never a jumpscare stinger.
+   */
+  eerieGlimpse(pan = 0): void {
+    const ctx = this.ensure();
+    if (!ctx || !this.master) return;
+    const hasPanner = typeof ctx.createStereoPanner === 'function';
+    const panner = hasPanner ? ctx.createStereoPanner() : null;
+    if (panner) {
+      panner.pan.value = Math.max(-1, Math.min(1, pan * 0.5));
+      panner.connect(this.master);
+    }
+    const dest = panner ?? this.master;
+    const t = ctx.currentTime;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.06, t + 0.28);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.1);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(340, t);
+    lp.frequency.exponentialRampToValueAtTime(140, t + 2.1); // filter slowly closes
+    lp.connect(g).connect(dest);
+
+    // 96 & 103.5 Hz beat together; 146 Hz sits a sour interval above them.
+    const oscs: OscillatorNode[] = [];
+    for (const f of [96, 103.5, 146]) {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(f, t);
+      o.frequency.exponentialRampToValueAtTime(f * 0.9, t + 2.1); // slow sink
+      o.connect(lp);
+      o.start(t);
+      o.stop(t + 2.2);
+      oscs.push(o);
+    }
+
+    // breathy noise "presence" — a little closer/louder than before
+    const dur = 1.1;
+    const len = Math.floor(ctx.sampleRate * dur);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 1.6);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1500;
+    bp.Q.value = 0.7;
+    const ng = ctx.createGain();
+    ng.gain.value = 0.024;
+    src.connect(bp).connect(ng).connect(dest);
+    src.start(t + 0.05);
+  }
+
   private tone(freq: number, dur: number, gain: number, type: OscillatorType = 'sine', when = 0): void {
     const ctx = this.ensure();
     if (!ctx || !this.master) return;

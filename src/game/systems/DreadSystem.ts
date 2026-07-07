@@ -9,21 +9,24 @@
  * reached; when backtracking it slowly decays toward the floor set by that
  * deepest zone — it never drops further, and it never jumps.
  *
- * The "silhouette anomaly" — a still, dark humanoid figure that appears
- * only in the very corner of the player's eye — is also managed from here.
- * It is not random: it is scripted to appear exactly twice per playthrough,
- * each time triggered by a world trigger at a specific spot (see
- * `triggerGlimpse`, called from CorridorMaze.ts and ServiceCorridor.ts). It
- * shows for about a second, at the edge of whatever the player happens to
- * be looking at when it's triggered, then fades on its own — sooner still
- * if the player's gaze swings toward it or they approach. It never moves,
- * never chases, never blocks the path.
+ * The "silhouette anomaly" — a dark humanoid figure — is also managed from
+ * here. It is not random: it is scripted to appear exactly twice per
+ * playthrough, each time triggered by a world trigger at a fixed position
+ * hand-picked to sit at the end of a corridor, half-hidden behind a real
+ * wall corner (see `triggerGlimpseAt`, called from CorridorMaze.ts and
+ * ServiceCorridor.ts). It appears already half-out and holds still; the
+ * moment the player looks toward it a 0.75 s countdown runs, after which it
+ * slides off to the player's right and fades. It never chases, never blocks
+ * the path. Each appearance plays a faint dissonant sound cue and a brief
+ * camera judder/grade pulse — restrained, not a jumpscare.
  */
 import * as THREE from 'three';
 import { CONFIG, ZONE_ORDER, ZONE_ID_RECTS, type ZoneId } from '../../config';
 import { rectContains } from '../../utils/collision';
 import type { World } from '../World';
 import type { AudioEngine } from '../../audio/AudioEngine';
+import type { Player } from '../Player';
+import type { PostProcessing } from './PostProcessing';
 
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
@@ -47,55 +50,88 @@ export class DreadSystem {
   private lastZ = CONFIG.playerStart.z;
   private bump = 0;
 
-  // silhouette anomaly — scripted glimpses only, see triggerGlimpse()
+  // silhouette anomaly — scripted glimpses only, see triggerGlimpseAt()
   private silhouette: THREE.Group;
-  private silhouetteActive = false;
-  private silhouetteAge = 0;
-  private silhouetteLookDwell = 0;
-  private silhouetteLifetime = 1;
+  private silhouetteMat!: THREE.MeshBasicMaterial;  // shared by all parts; opacity-faded on exit
+  private silhouetteHeadPivot!: THREE.Group;         // rotates to face the player each frame
+  private silhouetteActive = false;                  // true while phase !== 'idle' (external reads)
+  // Behaviour phases: appears half-out and holds ('wait'); once the player
+  // looks at it, a 0.75 s countdown runs ('countdown'); then it slides to the
+  // player's right and fades out ('exit').
+  private silhouettePhase: 'idle' | 'wait' | 'countdown' | 'exit' = 'idle';
+  private silhouetteLookCountdown = 0;
+  private silhouetteExitElapsed = 0;
+  private readonly silhouetteExitDir = new THREE.Vector3();
+  // Reused per-frame scratch vectors — avoids allocating in the update loop.
+  private readonly tmpFwd = new THREE.Vector3();
+  private readonly tmpToSil = new THREE.Vector3();
 
-  constructor(private scene: THREE.Scene, private world: World, private audio: AudioEngine) {
+  constructor(
+    private scene: THREE.Scene,
+    private world: World,
+    private audio: AudioEngine,
+    private player?: Player,
+    private post?: PostProcessing,
+  ) {
     this.silhouette = this.buildSilhouette();
   }
 
   /**
-   * A flat-black, unlit humanoid figure — legs, a tapered torso/shoulders,
-   * hanging arms, and a head — so at a glance it reads as a still person
-   * standing in the dark, not an ambiguous blob. Never lit, never animated.
+   * A 3-D humanoid built from primitives — all parts share one material so
+   * the whole figure can be faded by adjusting `silhouetteMat.opacity`.
+   * Proportions are slightly elongated (tall, long arms) to read as human
+   * but unsettling. A dedicated `silhouetteHeadPivot` group lets the head
+   * rotate independently each frame to face the player.
    */
   private buildSilhouette(): THREE.Group {
-    const mat = new THREE.MeshBasicMaterial({ color: 0x040403, transparent: true, opacity: 0.94, depthWrite: false, fog: false });
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x030303,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+      fog: false,
+    });
+    this.silhouetteMat = mat;
+
+    const mk = <G extends THREE.BufferGeometry>(geo: G, px = 0, py = 0, pz = 0, rx = 0, ry = 0, rz = 0) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(px, py, pz);
+      m.rotation.set(rx, ry, rz);
+      return m;
+    };
+
     const g = new THREE.Group();
 
-    const legGeo = new THREE.CapsuleGeometry(0.075, 0.72, 3, 6);
-    const legL = new THREE.Mesh(legGeo, mat);
-    legL.position.set(-0.1, 0.46, 0);
-    const legR = new THREE.Mesh(legGeo, mat);
-    legR.position.set(0.1, 0.46, 0);
+    // Legs — slightly longer than anatomically correct (unsettling)
+    const legGeo = new THREE.CapsuleGeometry(0.088, 0.88, 4, 8);
+    g.add(mk(legGeo, -0.13, 0.55, 0));
+    g.add(mk(legGeo,  0.13, 0.55, 0));
 
-    // Tapered torso: wider at the shoulders than the waist, built from two
-    // stacked boxes rather than a single smooth capsule, so it reads as
-    // shoulders rather than a rounded blob.
-    const hips = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.28, 0.2), mat);
-    hips.position.set(0, 0.95, 0);
-    const chest = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.42, 0.24), mat);
-    chest.position.set(0, 1.28, 0);
+    // Hips
+    g.add(mk(new THREE.BoxGeometry(0.34, 0.22, 0.26), 0, 1.08, 0));
 
-    const armGeo = new THREE.CapsuleGeometry(0.055, 0.6, 3, 6);
-    const armL = new THREE.Mesh(armGeo, mat);
-    armL.position.set(-0.29, 1.02, 0);
-    armL.rotation.z = 0.06;
-    const armR = new THREE.Mesh(armGeo, mat);
-    armR.position.set(0.29, 1.02, 0);
-    armR.rotation.z = -0.06;
+    // Chest — wider at shoulders
+    g.add(mk(new THREE.BoxGeometry(0.50, 0.54, 0.28), 0, 1.46, 0));
 
-    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.08, 8), mat);
-    neck.position.set(0, 1.55, 0);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.135, 12, 10), mat);
-    head.scale.set(0.92, 1.08, 0.98);
-    head.position.set(0, 1.7, 0.01);
+    // Arms — long, dropped slightly forward (the "wrong" stance)
+    const armGeo = new THREE.CapsuleGeometry(0.065, 0.76, 4, 8);
+    g.add(mk(armGeo, -0.34, 1.10, 0.04,  0.08, 0,  0.13));
+    g.add(mk(armGeo,  0.34, 1.10, 0.04,  0.08, 0, -0.13));
 
-    g.add(legL, legR, hips, chest, armL, armR, neck, head);
+    // Neck
+    g.add(mk(new THREE.CylinderGeometry(0.077, 0.092, 0.18, 8), 0, 1.80, 0));
+
+    // Head pivot — child group so head can rotate independently
+    const headPivot = new THREE.Group();
+    headPivot.position.set(0, 1.97, 0);
+    // Head: slightly oval (taller than wide), leaning forward a touch
+    const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), mat);
+    headMesh.scale.set(0.91, 1.10, 0.96);
+    headMesh.position.set(0, 0, 0.04); // faint forward lean
+    headPivot.add(headMesh);
+    g.add(headPivot);
+    this.silhouetteHeadPivot = headPivot;
+
     g.visible = false;
     this.scene.add(g);
     return g;
@@ -175,87 +211,118 @@ export class DreadSystem {
     fog.density = cfg.maxDensity * lateness;
   }
 
-  /** Per-frame fade/vanish upkeep for whichever glimpse is currently active
-   * (if any) — does not spawn anything itself, see `triggerGlimpse`. */
+  /**
+   * Per-frame upkeep for the active glimpse. State machine:
+   *   'wait'      — figure stands half-out, head tracking the player. As soon
+   *                 as the player looks toward it, → 'countdown'.
+   *   'countdown' — a 0.75 s timer runs (head still tracking). At zero, the
+   *                 player's screen-right direction is captured, → 'exit'.
+   *   'exit'      — figure slides along that right direction over ~0.7 s while
+   *                 its opacity fades to 0, then deactivates.
+   * The player getting within 1.2 m during wait/countdown also jumps to exit.
+   */
   private updateSilhouette(dt: number, px: number, pz: number, camera: THREE.PerspectiveCamera): void {
-    if (!this.silhouetteActive) return;
-    const S = CONFIG.dread.silhouette;
-
-    this.silhouetteAge += dt;
+    if (this.silhouettePhase === 'idle') return;
+    const cam = this.player?.getCamera() ?? camera;
     const pos = this.silhouette.position;
-    const dist = Math.hypot(px - pos.x, pz - pos.z);
 
-    const toSil = new THREE.Vector3(pos.x - camera.position.x, pos.y + 1.0 - camera.position.y, pos.z - camera.position.z);
-    const distToCam = toSil.length();
-    toSil.normalize();
-    const fwd = new THREE.Vector3();
-    camera.getWorldDirection(fwd);
-    const angle = distToCam > 0.001 ? fwd.angleTo(toSil) : Math.PI;
-    // Wide cone + short dwell: it starts fading as soon as the player's
-    // gaze swings toward it, not only once they're dead-center on it.
-    if (angle < S.lookAngle) this.silhouetteLookDwell += dt;
-    else this.silhouetteLookDwell = Math.max(0, this.silhouetteLookDwell - dt * 2.5);
+    const LOOK_CONE = 0.5;      // radians — "the player is looking at it"
+    const COUNTDOWN = 0.75;     // seconds after being seen
+    const EXIT_DURATION = 0.7;  // slide-out + fade time
+    const EXIT_SPEED = 1.8;     // metres/second slide
 
-    const shouldVanish =
-      dist < 2 || this.silhouetteLookDwell >= S.lookAwayDwellSec || this.silhouetteAge > this.silhouetteLifetime;
-    if (shouldVanish) {
-      this.silhouette.visible = false;
-      this.silhouetteActive = false;
+    const beginExit = () => {
+      // Capture the player's flattened screen-right direction and slide along it.
+      this.silhouetteExitDir.set(1, 0, 0).applyQuaternion(cam.quaternion);
+      this.silhouetteExitDir.y = 0;
+      if (this.silhouetteExitDir.lengthSq() < 1e-6) this.silhouetteExitDir.set(1, 0, 0);
+      this.silhouetteExitDir.normalize();
+      this.silhouetteExitElapsed = 0;
+      this.silhouettePhase = 'exit';
+    };
+
+    // Head tracks the player while it's still standing there.
+    if (this.silhouettePhase === 'wait' || this.silhouettePhase === 'countdown') {
+      const localTargetYaw = Math.atan2(cam.position.x - pos.x, cam.position.z - pos.z) - this.silhouette.rotation.y;
+      this.silhouetteHeadPivot.rotation.y = THREE.MathUtils.lerp(
+        this.silhouetteHeadPivot.rotation.y,
+        localTargetYaw,
+        Math.min(1, dt * 3.5),
+      );
+
+      // Proximity fail-safe so the player never walks into it.
+      if (Math.hypot(px - pos.x, pz - pos.z) < 1.2) {
+        beginExit();
+        return;
+      }
+    }
+
+    if (this.silhouettePhase === 'wait') {
+      // Is the player looking toward the figure's upper body?
+      this.tmpToSil.set(pos.x - cam.position.x, 1.4 - cam.position.y, pos.z - cam.position.z);
+      const d = this.tmpToSil.length();
+      if (d > 0.001) {
+        this.tmpToSil.multiplyScalar(1 / d);
+        cam.getWorldDirection(this.tmpFwd);
+        if (this.tmpFwd.angleTo(this.tmpToSil) < LOOK_CONE) {
+          this.silhouetteLookCountdown = COUNTDOWN;
+          this.silhouettePhase = 'countdown';
+        }
+      }
+    } else if (this.silhouettePhase === 'countdown') {
+      this.silhouetteLookCountdown -= dt;
+      if (this.silhouetteLookCountdown <= 0) beginExit();
+    } else if (this.silhouettePhase === 'exit') {
+      this.silhouetteExitElapsed += dt;
+      pos.addScaledVector(this.silhouetteExitDir, EXIT_SPEED * dt);
+      const p = clamp01(this.silhouetteExitElapsed / EXIT_DURATION);
+      this.silhouetteMat.opacity = 0.92 * (1 - p);
+      if (p >= 1) {
+        this.silhouette.visible = false;
+        this.silhouettePhase = 'idle';
+        this.silhouetteActive = false;
+        this.silhouetteMat.opacity = 0.92;
+        this.silhouetteHeadPivot.rotation.y = 0;
+      }
     }
   }
 
   /**
-   * Scripted, one-shot glimpse: places the humanoid silhouette right at the
-   * edge of the camera's *current* field of view (whatever the player
-   * happens to already be looking toward at the moment this fires), a short
-   * distance ahead, then lets it fade after about a second on its own.
-   * Called from a world trigger the first time the player reaches one of
-   * the two scripted spots — never randomly, never more than these two.
+   * Scripted glimpse. The figure is placed at (x, z) — a spot at the end of a
+   * corridor where a real wall corner hides roughly half of it — and shown
+   * immediately, standing still ('wait' phase). It holds there, head tracking
+   * the player, until the player looks toward it; then a 0.75 s countdown runs
+   * and it slides off to the player's right and fades (see updateSilhouette).
+   *
+   * @param x / z  Standing position (half-occluded by a nearby wall corner).
+   * @param yaw    Body rotation. Defaults to auto-face the player.
    */
-  triggerGlimpse(
-    camera: THREE.PerspectiveCamera,
-    clampRect?: { x1: number; x2: number; z1: number; z2: number },
-    distanceRange?: [number, number],
-  ): void {
-    if (this.silhouetteActive) return;
-    const S = CONFIG.dread.silhouette;
-
-    const vFov = THREE.MathUtils.degToRad(camera.fov);
-    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
-    // A fraction just short of the true edge so it's still on-screen —
-    // "the corner of the eye", not off past the frustum.
-    const edgeAngle = (hFov / 2) * S.glimpseEdgeFraction;
-    const side = Math.random() < 0.5 ? -1 : 1;
-    const ang = side * edgeAngle;
-    const [dMin, dMax] = distanceRange ?? S.glimpseDistance;
-    const dist = dMin + Math.random() * (dMax - dMin);
-
-    const fwd = new THREE.Vector3();
-    camera.getWorldDirection(fwd);
-    fwd.y = 0;
-    if (fwd.lengthSq() < 1e-6) return;
-    fwd.normalize();
-    const cos = Math.cos(ang);
-    const sin = Math.sin(ang);
-    const dirX = fwd.x * cos - fwd.z * sin;
-    const dirZ = fwd.x * sin + fwd.z * cos;
-
-    let x = camera.position.x + dirX * dist;
-    let z = camera.position.z + dirZ * dist;
-    if (clampRect) {
-      x = Math.min(Math.max(x, clampRect.x1 + 0.7), clampRect.x2 - 0.7);
-      z = Math.min(Math.max(z, clampRect.z1 + 0.7), clampRect.z2 - 0.7);
-    }
+  triggerGlimpseAt(x: number, z: number, yaw?: number): void {
+    if (this.silhouettePhase !== 'idle') return;
 
     this.silhouette.position.set(x, 0, z);
-    this.silhouette.rotation.y = Math.random() * Math.PI * 2;
+
+    // Body faces the direction given by yaw, or toward the player if omitted.
+    const cam = this.player?.getCamera();
+    if (cam && yaw === undefined) {
+      this.silhouette.rotation.y = Math.atan2(cam.position.x - x, cam.position.z - z);
+    } else {
+      this.silhouette.rotation.y = yaw ?? 0;
+    }
+
+    this.silhouetteHeadPivot.rotation.y = 0;
+    this.silhouetteMat.opacity = 0.92;
     this.silhouette.visible = true;
     this.silhouetteActive = true;
-    this.silhouetteAge = 0;
-    this.silhouetteLookDwell = 0;
-    this.silhouetteLifetime = S.glimpseLifetimeSec;
-    // A couple of faint, distant footstep-like taps panned toward it —
-    // it never moves, but the room briefly sounds like it isn't empty.
+    this.silhouettePhase = 'wait';
+    this.silhouetteLookCountdown = 0;
+    this.silhouetteExitElapsed = 0;
+
+    const camX = cam?.position.x ?? x;
+    const side = x < camX ? -1 : 1;
     this.audio.ambientPresence(side);
+    this.audio.eerieGlimpse(side);
+    this.player?.triggerShake(0.03, 0.6);
+    this.post?.triggerPulse(0.72, 1.3);
   }
 }

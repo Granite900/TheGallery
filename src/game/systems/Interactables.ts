@@ -19,6 +19,7 @@ export class Interactables {
   private targets: THREE.Object3D[] = [];
   private raycaster = new THREE.Raycaster();
   private current: Interactable | null = null;
+  private readonly screenCenter = new THREE.Vector2(0, 0);
 
   constructor(private maxDistance: number, private hud: HUD) {
     this.raycaster.far = maxDistance;
@@ -37,7 +38,7 @@ export class Interactables {
 
   update(camera: THREE.Camera): void {
     camera.updateMatrixWorld();
-    this.raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    this.raycaster.setFromCamera(this.screenCenter, camera);
     const hits = this.raycaster.intersectObjects(this.targets, true);
 
     let found: Interactable | null = null;

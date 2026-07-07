@@ -162,12 +162,22 @@ export function buildCorridorMaze(ctx: ZoneContext): void {
   // East branch frame
   world.addFrame({ x: 17, z: Z.mazeC.z2 - 0.08, facing: 'n', w: 0.8, h: 0.62, seed: CONFIG.seeds.mazePaintings + 4 });
 
-  // -- silhouette glimpse #1: the east arm of the T-junction ---------------
-  // One-time, edge-of-vision-only appearance as the player heads toward
-  // Gallery B (the correct path) — gone again within about a second.
-  const glimpse1 = world.addTrigger({ x1: 15.2, z1: -46.2, x2: 15.9, z2: -44 }, () => {
+  // -- silhouette glimpse #1: around the Segment B L-turn ------------------
+  // Segment B is a genuine 90° corner (8m east along mazeB1, then 8m north
+  // up mazeB2) — the actual wall at that corner hides mazeB2 completely
+  // while walking mazeB1, so the figure standing just past the turn is only
+  // revealed the moment the player turns to head north, then gone again
+  // within about a second.
+  // Trigger fires as the player enters the north leg of the L-turn (mazeB2),
+  // just after rounding the corner. The figure stands at the FAR (south) end
+  // of this corridor, tucked against the east wall so the wall corner hides
+  // roughly half of it — the player sees it peering back at them from the end
+  // of the hallway. It holds until looked at, then slides right and fades.
+  const glimpse1 = world.addTrigger({ x1: Z.mazeB2.x1, z1: -39.6, x2: Z.mazeB2.x2, z2: -38.4 }, () => {
     glimpse1.active = false;
-    ctx.dread.triggerGlimpse(player.getCamera(), Z.galleryClassical);
+    // (14.0, -43.4): against the east wall (x=14.1) near the south end,
+    // ~half-occluded by the wall; auto-faces the player.
+    ctx.dread.triggerGlimpseAt(14.0, -43.4);
   });
 
   // -- déjà vu: whole pocket is the trigger zone, entered/left on foot -----

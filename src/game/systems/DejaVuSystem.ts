@@ -15,7 +15,7 @@ import { CONFIG } from '../../config';
 import type { AudioEngine } from '../../audio/AudioEngine';
 import type { Player } from '../Player';
 
-export type DejaVuTemplateId = 'entryCorridorEcho';
+export type DejaVuTemplateId = 'entryCorridorEcho' | 'lobbyEcho';
 
 export class DejaVuSystem {
   private repeatsUsed = 0;
@@ -24,6 +24,8 @@ export class DejaVuSystem {
   private ghost: THREE.Group | null = null;
   private ghostAge = 0;
   private ghostLookDwell = 0;
+  private tmpToGhost = new THREE.Vector3();
+  private tmpFwd = new THREE.Vector3();
 
   private footstepListener: (() => void) | null = null;
 
@@ -93,10 +95,10 @@ export class DejaVuSystem {
     const gp = this.ghost.position;
     const dist = Math.hypot(px - gp.x, pz - gp.z);
 
-    const toGhost = new THREE.Vector3(gp.x - camera.position.x, 1.2 - camera.position.y, gp.z - camera.position.z);
+    const toGhost = this.tmpToGhost.set(gp.x - camera.position.x, 1.2 - camera.position.y, gp.z - camera.position.z);
     const len = toGhost.length();
     toGhost.normalize();
-    const fwd = new THREE.Vector3();
+    const fwd = this.tmpFwd;
     camera.getWorldDirection(fwd);
     const angle = len > 0.001 ? fwd.angleTo(toGhost) : Math.PI;
     if (angle < 0.1) this.ghostLookDwell += dt;
