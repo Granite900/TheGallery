@@ -42,6 +42,7 @@ async function boot() {
   initPhoneLink(game);
   await game.goto('menu');
   loader.style.opacity = '0';
+  loader.style.pointerEvents = 'none';
   setTimeout(() => loader.remove(), 700);
 }
 

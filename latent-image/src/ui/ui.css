@@ -51,6 +51,8 @@ html, body {
   z-index: 2;
 }
 #ui > * { pointer-events: auto; }
+/* a passthrough layer lets clicks reach the 3D view, but what sits on it stays clickable */
+#ui .passthrough > * { pointer-events: auto; }
 #ui .passthrough { pointer-events: none; }
 
 body.darkroom-red #ui { filter: sepia(1) saturate(4) hue-rotate(-28deg) brightness(0.62); }

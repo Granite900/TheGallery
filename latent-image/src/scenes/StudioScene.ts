@@ -455,17 +455,9 @@ export async function createStudio(game: Game, args: Record<string, unknown>): P
   game.audio.loop('room', true);
   if (menu) {
     game.hud.setVisible({ ledger: false, clip: false, hint: false });
-    showMenu(game, () => {
-      game.hud.setVisible({ ledger: true, clip: true, hint: true });
-      mode = 'overview';
-      glide.sway = 0;
-      glide.go(POSES.overview, 2.2);
-      glide.parallax = 0.18;
-      setHints();
-      placeCabinet();
-      drawBoard(cork.tex, game);
-      showLetterIfNew();
-    });
+    // New career / Continue replace game.state, and this scene captured the old
+    // state object at creation, so rebuild the studio around the chosen one.
+    showMenu(game, () => void game.goto('studio'));
   } else {
     game.hud.setVisible({ ledger: true, clip: true, hint: true });
     setHints();
