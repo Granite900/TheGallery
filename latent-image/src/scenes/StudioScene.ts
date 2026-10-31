@@ -25,13 +25,13 @@ import { CHAPTERS } from '../sim/career';
 type Station = 'overview' | 'desk' | 'cabinet' | 'board' | 'lighttable' | 'menu' | 'projector';
 
 const POSES: Record<Station, Pose> = {
-  overview: { pos: V(0.2, 1.62, -1.5), target: V(0.4, 1.15, 1.6), fov: 1.0 },
+  overview: { pos: V(0.2, 1.62, -0.35), target: V(0.4, 1.12, 1.9), fov: 1.0 },
   menu: { pos: V(-0.9, 1.38, 0.7), target: V(0.75, 0.95, 2.1), fov: 0.8 },
   desk: { pos: V(0.62, 1.12, 1.52), target: V(0.62, 0.84, 2.02), fov: 0.62 },
   cabinet: { pos: V(-1.45, 1.3, 0.5), target: V(-2.8, 1.12, 0.5), fov: 0.85 },
   board: { pos: V(1.7, 1.55, 0.8), target: V(2.98, 1.5, 0.8), fov: 0.8 },
   lighttable: { pos: V(2.2, 1.45, 1.35), target: V(2.4, 0.86, 2.05), fov: 0.8 },
-  projector: { pos: V(0.6, 1.4, 0.4), target: V(0.6, 1.4, -2.5), fov: 0.9 },
+  projector: { pos: V(0.6, 1.45, -0.2), target: V(0.85, 1.4, -2.5), fov: 0.9 },
 };
 
 const DESK_ANCHOR = V(0.62, 0.795, 2.04);
@@ -172,13 +172,13 @@ export async function createStudio(game: Game, args: Record<string, unknown>): P
   // projector + screen on the south wall
   const proj = projector(scene, mats);
   const projTable = table(scene, mats, 0.5, 0.45, 0.72);
-  projTable.root.position.set(0.9, 0, -0.6);
-  proj.root.position.set(0.9, 0.72, -0.6);
+  projTable.root.position.set(0.9, 0, -1.55);
+  proj.root.position.set(0.9, 0.72, -1.55);
   proj.root.rotation.y = 0;
   const screen = MeshBuilder.CreatePlane('screen', { width: 1.5, height: 1.1 }, scene);
   screen.position.set(0.9, 1.55, -2.46);
   screen.rotation.y = Math.PI;
-  screen.material = mats.painted(new Color3(0.82, 0.82, 0.8), 0.95, 'screen');
+  screen.material = mats.painted(new Color3(0.55, 0.55, 0.53), 0.95, 'screen');
   // framed prints on the walls (Ruth's)
   framedPrints(scene, mats, game);
 
@@ -208,7 +208,7 @@ export async function createStudio(game: Game, args: Record<string, unknown>): P
   // ---------- camera & post ----------
   const glide = new GlideCamera(scene, menu ? POSES.menu : POSES.overview);
   glide.sway = menu ? 0.06 : 0;
-  glide.parallax = menu ? 0 : 0.18;
+  glide.parallax = 0;
   const pipe = makePipeline(scene, [glide.cam], q, { exposure: 1.05, contrast: 1.1, bloom: 0.12, bloomThreshold: 1.4, ssaoRadius: 0.35, ssaoStrength: 1.0, vignette: 0.32, grain: 5 });
   if (q === 'high' || q === 'ultra') {
     const vls = new VolumetricLightScatteringPostProcess('godrays', 1.0, glide.cam, outside, q === 'ultra' ? 90 : 60, Texture.BILINEAR_SAMPLINGMODE, game.engine, false);
@@ -247,13 +247,24 @@ export async function createStudio(game: Game, args: Record<string, unknown>): P
 
   // ---------- interaction ----------
   let mode: Station = menu ? 'menu' : 'overview';
+  // turn-in-place look direction for the overview (radians, + = right / up)
+  let viewYaw = 0;
+  let viewPitch = 0;
+  const setLook = (yaw: number, pitch: number) => {
+    viewYaw = yaw;
+    viewPitch = Math.max(-0.6, Math.min(0.6, pitch));
+    glide.look.toYaw = viewYaw;
+    glide.look.toPitch = viewPitch;
+  };
+  const held = new Set<string>();
+  let drag: { x: number; y: number; moved: number } | null = null;
   let inspector: Inspector | null = null;
   let deskSheet: HTMLElement | null = null;
   const layer = game.hud.sceneLayer;
 
   const setHints = () => {
     const hints: Record<Station, [string, string][]> = {
-      overview: [['Click', 'walk to'], ['Esc', 'settings'], ['C', 'collection book']],
+      overview: [['Drag', 'look around'], ['A/D', 'turn'], ['Click', 'walk to'], ['1–7', 'places'], ['Esc', 'settings'], ['C', 'collection book']],
       desk: [['Drag', 'turn camera'], ['Click part', 'inspect'], ['Esc', 'step back']],
       cabinet: [['Click camera', 'take to desk'], ['Esc', 'step back']],
       board: [['Esc', 'step back']],
@@ -285,7 +296,8 @@ export async function createStudio(game: Game, args: Record<string, unknown>): P
           goto('cabinet');
         },
         loaded: () => {
-          inspector?.rig.setFilmLoaded('x');
+          const u = unitById(s, s.activeCameraId);
+          inspector?.rig.setFilmLoaded(s.rolls.find((r) => r.id === u?.rollId)?.stockId ?? null);
         },
       },
       inspector.findings,
@@ -346,6 +358,7 @@ export async function createStudio(game: Game, args: Record<string, unknown>): P
   const goto = (st: Station) => {
     if (st === mode && st !== 'desk') return;
     const leavingDesk = mode === 'desk' && st !== 'desk';
+    if (mode === 'overview' || mode === 'menu') glide.bakeLook();
     mode = st;
     if (leavingDesk) {
       inspector?.dispose();
@@ -355,7 +368,7 @@ export async function createStudio(game: Game, args: Record<string, unknown>): P
       placeCabinet();
     }
     glide.go(POSES[st]);
-    glide.parallax = st === 'overview' ? 0.18 : 0;
+    if (st === 'overview') setLook(viewYaw, viewPitch);
     setHints();
     if (st === 'desk') {
       placeCabinet();
@@ -391,12 +404,58 @@ export async function createStudio(game: Game, args: Record<string, unknown>): P
     }
   };
 
+  const useStation = (st: string) => {
+    game.hud.tooltip(null);
+    if (st === 'out') {
+      game.hud.modal(
+        outingPanel(
+          game,
+          (where, lighting) => void game.goto('shoot', { location: where, lighting }),
+          () => void game.goto('market'),
+        ),
+      );
+    } else if (st === 'darkroom') void game.goto('darkroom');
+    else if (st === 'catalogue') game.hud.modal(cataloguePanel(game, () => undefined));
+    else goto(st as Station);
+  };
+  const HOTKEYS: Record<string, string> = { '1': 'desk', '2': 'cabinet', '3': 'board', '4': 'lighttable', '5': 'projector', '6': 'out', '7': 'darkroom' };
+
+  // hold A/D or arrows to turn, W/S to tilt
+  scene.onBeforeRenderObservable.add(() => {
+    if (mode !== 'overview' || game.hud.modalOpen || !held.size) return;
+    const dt = Math.min(0.05, game.engine.getDeltaTime() / 1000);
+    const turn = (held.has('d') || held.has('arrowright') ? 1 : 0) - (held.has('a') || held.has('arrowleft') ? 1 : 0);
+    const tilt = (held.has('w') || held.has('arrowup') ? 1 : 0) - (held.has('s') || held.has('arrowdown') ? 1 : 0);
+    if (turn || tilt) setLook(viewYaw + turn * dt * 1.8, viewPitch + tilt * dt * 1.0);
+  });
+
   scene.onPointerObservable.add((pi) => {
-    if (mode === 'menu' || game.hud.modalOpen) return;
+    if (mode === 'menu' || game.hud.modalOpen) {
+      drag = null;
+      return;
+    }
     const e = pi.event as PointerEvent;
+    if (pi.type === PointerEventTypes.POINTERDOWN) {
+      drag = mode === 'overview' && e.button === 0 ? { x: e.clientX, y: e.clientY, moved: 0 } : null;
+      return;
+    }
     if (pi.type === PointerEventTypes.POINTERMOVE) {
       glide.mouse.x = (e.clientX / window.innerWidth - 0.5) * 2;
       glide.mouse.y = (e.clientY / window.innerHeight - 0.5) * 2;
+      if (drag && mode === 'overview' && e.buttons & 1) {
+        const dx = e.clientX - drag.x;
+        const dy = e.clientY - drag.y;
+        drag.moved += Math.abs(dx) + Math.abs(dy);
+        drag.x = e.clientX;
+        drag.y = e.clientY;
+        if (drag.moved > 6) {
+          // grab-the-room feel: drag right turns the view left
+          setLook(viewYaw - dx * 0.005, viewPitch + dy * 0.004);
+          game.hud.tooltip(null);
+          game.canvas.style.cursor = 'grabbing';
+          return;
+        }
+      }
       if (mode === 'desk') return;
       const pick = scene.pick(scene.pointerX, scene.pointerY);
       const st = pick?.pickedMesh ? findMeta<string>(pick.pickedMesh, 'station')?.value : undefined;
@@ -404,9 +463,11 @@ export async function createStudio(game: Game, args: Record<string, unknown>): P
       const labels: Record<string, string> = { desk: 'Desk', catalogue: 'Mail-order catalogue', cabinet: 'Display cabinet', board: 'Corkboard', lighttable: 'Light table', out: 'Go out', darkroom: 'Darkroom', projector: 'Projector' };
       const u = unitHit ? unitById(s, unitHit) : undefined;
       game.hud.tooltip(u ? unitTitle(u) + (u.clientJob ? ' (client)' : '') : st ? labels[st] : null, e.clientX, e.clientY);
-      game.canvas.style.cursor = st || u ? 'pointer' : 'default';
+      game.canvas.style.cursor = st || u ? 'pointer' : mode === 'overview' ? 'grab' : 'default';
     } else if (pi.type === PointerEventTypes.POINTERUP && e.button === 0) {
-      if (mode === 'desk') return;
+      const wasDrag = !!drag && drag.moved > 6;
+      drag = null;
+      if (wasDrag || mode === 'desk') return;
       const pick = scene.pick(scene.pointerX, scene.pointerY);
       if (!pick?.pickedMesh) return;
       const unitHit = findMeta<string>(pick.pickedMesh, 'unitId')?.value;
@@ -418,18 +479,7 @@ export async function createStudio(game: Game, args: Record<string, unknown>): P
       }
       const st = findMeta<string>(pick.pickedMesh, 'station')?.value;
       if (!st) return;
-      game.hud.tooltip(null);
-      if (st === 'out') {
-        game.hud.modal(
-          outingPanel(
-            game,
-            (where, lighting) => void game.goto('shoot', { location: where, lighting }),
-            () => void game.goto('market'),
-          ),
-        );
-      } else if (st === 'darkroom') void game.goto('darkroom');
-      else if (st === 'catalogue') game.hud.modal(cataloguePanel(game, () => undefined));
-      else goto(st as Station);
+      useStation(st);
     }
   });
 
@@ -440,8 +490,18 @@ export async function createStudio(game: Game, args: Record<string, unknown>): P
       pipe.dispose();
       scene.dispose();
     },
+    debug: { inspector: () => inspector, goto: (st: Station) => goto(st), look: setLook, mode: () => mode, moving: () => glide.moving },
     onKey: (e, down) => {
-      if (!down) return;
+      const k = e.key.toLowerCase();
+      if (!down) {
+        held.delete(k);
+        return;
+      }
+      if (['a', 'd', 'w', 's', 'arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(k)) held.add(k);
+      if (HOTKEYS[k] && mode !== 'menu' && !game.hud.modalOpen) {
+        useStation(HOTKEYS[k]);
+        return;
+      }
       if (e.key === 'Escape') {
         if (game.hud.closeTop()) return;
         if (mode === 'menu') return;

@@ -71,8 +71,15 @@ export class Game {
     this.current?.onKey?.(e, down);
   }
 
+  /** a scene change asked for while another one was still loading */
+  private queued: { id: SceneId; args: Record<string, unknown> } | null = null;
+
   async goto(id: SceneId, args: Record<string, unknown> = {}): Promise<void> {
-    if (this.busy) return;
+    if (this.busy) {
+      // don't drop it: clicks during a slow load (e.g. "Back to the studio") run once the load finishes
+      this.queued = { id, args };
+      return;
+    }
     this.busy = true;
     try {
       await this.hud.fade(true);
@@ -102,6 +109,9 @@ export class Game {
     } finally {
       this.busy = false;
     }
+    const next = this.queued;
+    this.queued = null;
+    if (next) await this.goto(next.id, next.args);
   }
 
   newCareer() {

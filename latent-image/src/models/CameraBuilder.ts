@@ -12,6 +12,7 @@ import { CameraModel, camera as cameraModel, lens as lensModel, film } from '../
 import { CameraUnit, LensUnit, variantOf } from '../sim/units';
 import { buildLens, LensRig, bandTexture } from './LensBuilder';
 import { cyl, lathe, ring, roundedBox, textTexture } from './geom';
+import { makeRng, hashString } from '../sim/rng';
 
 export type Hotspot = 'back' | 'lens' | 'shutter' | 'advance' | 'battery' | 'serial' | 'counter' | 'body';
 
@@ -122,11 +123,23 @@ function knob(c: Ctx, r: number, h: number, x: number, y: number, z: number, mat
 }
 
 /** Body shell: leatherette wrap with a metal top & bottom plate */
-function shell(c: Ctx, w: number, h: number, d: number, topH: number, botH: number, r: number, leatherBrown = false) {
+function shell(c: Ctx, w: number, h: number, d: number, topH: number, botH: number, r: number, leatherBrown = false, cav = 0, endW = 0.006) {
   const plate = c.finish === 'black' ? c.mats.blackPaint() : c.mats.satinChrome();
-  const mid = roundedBox('body', c.scene, w * 0.995, h - topH - botH + 0.002, d * 0.995, r * 0.95, 5, 18);
-  part(c, mid, c.mats.leatherette(1, 1, leatherBrown), c.root, 'body');
+  const midH = h - topH - botH + 0.002;
+  // the leatherette middle only fills the front of the body; the back is the film chamber
+  const midD = (d - cav) * 0.995;
+  const mid = roundedBox('body', c.scene, w * 0.995, midH, midD, Math.min(r * 0.95, midD * 0.49), 5, 18);
+  const leather = c.mats.leatherette(1, 1, leatherBrown);
+  part(c, mid, leather, c.root, 'body');
   mid.position.y = (botH - topH) / 2;
+  mid.position.z = cav / 2;
+  if (cav > 0) {
+    for (const sx of [-1, 1]) {
+      const end = roundedBox('bodyEnd', c.scene, endW, midH, cav + 0.004, Math.min(r * 0.95, endW * 0.49), 3, 18);
+      part(c, end, leather, c.root, 'body');
+      end.position.set(sx * (w * 0.995 / 2 - endW / 2), (botH - topH) / 2, -d / 2 + (cav + 0.004) / 2);
+    }
+  }
   const top = roundedBox('topPlate', c.scene, w, topH, d, r, 5);
   part(c, top, plate, c.root, 'body');
   top.position.y = h / 2 - topH / 2;
@@ -147,39 +160,344 @@ function wearOverlay(c: Ctx, meshes: Mesh[]) {
   }
 }
 
-function sealsMaterial(c: Ctx, condition: number): PBRMaterial {
-  const m = new PBRMaterial('seals', c.scene);
-  if (condition > 0.5) {
-    m.albedoColor = new Color3(0.012, 0.012, 0.012);
-    m.roughness = 0.95;
-  } else {
-    // decomposed foam: sticky glossy tar
-    m.albedoColor = new Color3(0.02, 0.015, 0.01);
-    m.roughness = 0.12 + condition * 0.4;
-    m.clearCoat.isEnabled = true;
-    m.clearCoat.intensity = 1 - condition;
+// ---------------------------------------------------------------- interiors
+const interiorMats = new WeakMap<Scene, Map<string, PBRMaterial>>();
+function pbr(c: Ctx, key: string, col: Color3, metal: number, rough: number, clear = 0): PBRMaterial {
+  let m = interiorMats.get(c.scene);
+  if (!m) {
+    m = new Map();
+    interiorMats.set(c.scene, m);
   }
-  m.metallic = 0;
+  let x = m.get(key);
+  if (!x) {
+    x = new PBRMaterial(`int-${key}`, c.scene);
+    x.albedoColor = col;
+    x.metallic = metal;
+    x.roughness = rough;
+    if (clear > 0) {
+      x.clearCoat.isEnabled = true;
+      x.clearCoat.intensity = clear;
+      x.clearCoat.roughness = 0.06;
+    }
+    m.set(key, x);
+  }
+  return x;
+}
+const chamberMat = (c: Ctx) => pbr(c, 'chamber', new Color3(0.034, 0.034, 0.036), 0, 0.9);
+const filmPlateMat = (c: Ctx) => pbr(c, 'filmPlate', new Color3(0.045, 0.045, 0.048), 0, 0.8);
+const railMat = (c: Ctx) => c.mats.chrome(0.08);
+const filmBaseMat = (c: Ctx) => pbr(c, 'filmBase', new Color3(0.2, 0.11, 0.05), 0, 0.28);
+
+/** axis-aligned box from min/max corners */
+function ibox(c: Ctx, parent: TransformNode, name: string, x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, mat: PBRMaterial): Mesh {
+  const b = MeshBuilder.CreateBox(name, { width: Math.max(1e-4, x1 - x0), height: Math.max(1e-4, y1 - y0), depth: Math.max(1e-4, z1 - z0) }, c.scene);
+  b.parent = parent;
+  b.material = mat;
+  b.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+  return b;
+}
+
+/** cylinder along an axis */
+function icyl(c: Ctx, parent: TransformNode, name: string, dia: number, len: number, axis: 'x' | 'y', x: number, y: number, z: number, mat: PBRMaterial, tess = 24): Mesh {
+  const m = cyl(name, c.scene, dia, len, tess);
+  m.parent = parent;
+  m.material = mat;
+  m.position.set(x, y, z);
+  if (axis === 'x') m.rotation.z = Math.PI / 2;
   return m;
 }
 
-function filmGroup(c: Ctx, w: number, h: number, d: number, cassetteR: number): { node: TransformNode; label: PBRMaterial } {
-  const node = new TransformNode('film', c.scene);
+/** dark lining for the inside of a chamber box (back, ceiling, floor, ends) */
+function lineChamber(c: Ctx, parent: TransformNode, x0: number, x1: number, y0: number, y1: number, zb: number, zs: number, mat: PBRMaterial) {
+  const t = 0.0006;
+  ibox(c, parent, 'liner', x0, x1, y0, y1, zs - t, zs, mat);
+  ibox(c, parent, 'liner', x0, x1, y1 - t, y1, zb + 0.0008, zs, mat);
+  ibox(c, parent, 'liner', x0, x1, y0, y0 + t, zb + 0.0008, zs, mat);
+  ibox(c, parent, 'liner', x0, x0 + t, y0, y1, zb + 0.0008, zs, mat);
+  ibox(c, parent, 'liner', x1 - t, x1, y0, y1, zb + 0.0008, zs, mat);
+}
+
+type SealStyle = 'new' | 'old' | 'crumbling' | 'tar' | 'felt' | 'threadbare';
+function sealStyle(cond: number, felt: boolean): SealStyle {
+  if (felt) return cond < 0.3 ? 'threadbare' : 'felt';
+  return cond < 0.3 ? 'tar' : cond < 0.5 ? 'crumbling' : cond < 0.75 ? 'old' : 'new';
+}
+
+/**
+ * One light-seal strip in the channel around the door opening, running along
+ * `axis` from a to b at `fixed` on the other axis. Its look follows the same
+ * condition bands as the inspection text in sim/inspection.ts.
+ */
+function sealStrip(c: Ctx, parent: TransformNode, style: SealStyle, rng: () => number, axis: 'x' | 'y', a: number, b: number, fixed: number, zb: number, t: number, depth: number) {
+  const M = {
+    new: pbr(c, 'seal-new', new Color3(0.03, 0.03, 0.032), 0, 0.98),
+    old: pbr(c, 'seal-old', new Color3(0.07, 0.066, 0.062), 0, 0.93),
+    crumb: pbr(c, 'seal-crumb', new Color3(0.13, 0.1, 0.075), 0, 1),
+    dust: pbr(c, 'seal-dust', new Color3(0.2, 0.17, 0.13), 0, 1),
+    tar: pbr(c, 'seal-tar', new Color3(0.045, 0.024, 0.01), 0, 0.1, 1),
+    felt: pbr(c, 'seal-felt', new Color3(0.022, 0.02, 0.02), 0, 1),
+    bare: pbr(c, 'seal-bare', new Color3(0.16, 0.13, 0.1), 0, 0.9),
+  };
+  // foam fills its channel from the bottom (deep) side, so flattened foam sits lower
+  const put = (s0: number, s1: number, dScale: number, mat: PBRMaterial, tScale = 1) => {
+    const dd = depth * dScale;
+    const tt = t * tScale;
+    const z1 = zb + 0.0006 + depth;
+    if (axis === 'x') ibox(c, parent, 'seal', s0, s1, fixed - tt / 2, fixed + tt / 2, z1 - dd, z1, mat);
+    else ibox(c, parent, 'seal', fixed - tt / 2, fixed + tt / 2, s0, s1, z1 - dd, z1, mat);
+  };
+  const segments = (minL: number, maxL: number, gapP: number, each: (s0: number, s1: number) => void) => {
+    let p = a;
+    while (p < b) {
+      const l = minL + rng() * (maxL - minL);
+      const s1 = Math.min(b, p + l);
+      each(p, s1);
+      p = s1 + (rng() < gapP ? 0.0008 + rng() * 0.003 : 0);
+    }
+  };
+  switch (style) {
+    case 'new':
+      put(a, b, 1, M.new);
+      break;
+    case 'old':
+      put(a, b, 0.7, M.old);
+      break;
+    case 'crumbling':
+      put(a, b, 0.12, M.dust);
+      segments(0.002, 0.006, 0.4, (s0, s1) => {
+        if (rng() > 0.18) put(s0, s1, 0.3 + rng() * 0.6, M.crumb, 0.55 + rng() * 0.45);
+      });
+      break;
+    case 'tar':
+      segments(0.003, 0.009, 0, (s0, s1) => put(s0, s1, 0.45 + rng() * 0.55, M.tar, 0.9 + rng() * 0.4));
+      // sticky blobs and strands sagging out of the channel
+      for (let p = a + 0.003; p < b - 0.002; p += 0.005 + rng() * 0.009) {
+        const blob = MeshBuilder.CreateSphere('tarBlob', { diameterX: t * (1 + rng()), diameterY: t * (1 + rng()), diameterZ: 0.0025 + rng() * 0.003, segments: 6 }, c.scene);
+        blob.parent = parent;
+        blob.material = M.tar;
+        if (axis === 'x') blob.position.set(p, fixed, zb + 0.0008);
+        else blob.position.set(fixed, p, zb + 0.0008);
+      }
+      break;
+    case 'felt':
+      put(a, b, 1, M.felt);
+      break;
+    case 'threadbare':
+      put(a, b, 0.35, M.bare);
+      segments(0.003, 0.008, 0.55, (s0, s1) => {
+        if (rng() > 0.35) put(s0, s1, 0.6 + rng() * 0.4, M.felt, 0.7 + rng() * 0.3);
+      });
+      break;
+  }
+}
+
+interface Interior {
+  node: TransformNode;
+  label: PBRMaterial;
+  /** film parts shown when a roll is loaded */
+  film: TransformNode;
+}
+
+/** 35mm film chamber: cassette well, film-plane plate with rails and gate, sprocket, take-up spool. */
+function chamber35(c: Ctx, model: CameraModel, unit: CameraUnit, g: { w: number; h: number; d: number; topH: number; botH: number; cav: number; endW: number; lensX: number; lensY: number }): Interior {
+  const { w, h, d, topH, botH, cav, endW } = g;
+  const node = new TransformNode('chamber', c.scene);
   node.parent = c.root;
-  const cas = cyl('cassette', c.scene, cassetteR * 2, h * 0.62, 32);
-  cas.parent = node;
-  cas.position.set(-w * 0.38, 0, -d * 0.05);
+  const zb = -d / 2;
+  const zs = -d / 2 + cav;
+  const zf = zb + 0.0065;
+  const yb = -h / 2 + botH;
+  const yt = h / 2 - topH;
+  const xi0 = -w / 2 + endW;
+  const xi1 = w / 2 - endW;
+  const xl = xi0 + 0.028;
+  const xr = xi1 - 0.026;
+  const clampN = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+  const gx = clampN(g.lensX, xl + 0.019, xr - 0.019);
+  const gy = clampN(g.lensY, yb + 0.019, yt - 0.019);
+  lineChamber(c, node, xi0, xi1, yb, yt, zb, zs, chamberMat(c));
+  // film-plane plate around the gate
+  const plate = filmPlateMat(c);
+  const zp1 = zs - 0.0006;
+  ibox(c, node, 'filmPlate', xl, xr, gy + 0.012, yt - 0.0006, zf, zp1, plate);
+  ibox(c, node, 'filmPlate', xl, xr, yb + 0.0006, gy - 0.012, zf, zp1, plate);
+  ibox(c, node, 'filmPlate', xl, gx - 0.018, gy - 0.012, gy + 0.012, zf, zp1, plate);
+  ibox(c, node, 'filmPlate', gx + 0.018, xr, gy - 0.012, gy + 0.012, zf, zp1, plate);
+  // polished rails
+  const rail = railMat(c);
+  for (const sy of [-1, 1]) {
+    ibox(c, node, 'outerRail', xl + 0.002, xr - 0.002, gy + sy * 0.0172 - 0.0007, gy + sy * 0.0172 + 0.0007, zf - 0.0012, zf, rail);
+    ibox(c, node, 'innerRail', gx - 0.022, gx + 0.022, gy + sy * 0.0128 - 0.0006, gy + sy * 0.0128 + 0.0006, zf - 0.0007, zf, rail);
+  }
+  // what you see through the gate
+  const focalPlane = model.shutter === 'focalplane';
+  const metalBlades = model.id === 'fm2' || model.id === 'ae1p';
+  if (focalPlane && metalBlades) {
+    const blades = MeshBuilder.CreateBox('shutterBlades', { width: 0.025, height: 0.037, depth: 0.0006 }, c.scene);
+    blades.parent = node;
+    blades.rotation.z = Math.PI / 2;
+    blades.position.set(gx, gy, zp1 - 0.0004);
+    blades.material = c.mats.ribbed(9, new Color3(0.3, 0.3, 0.32));
+  } else if (focalPlane) {
+    ibox(c, node, 'shutterCurtain', gx - 0.0185, gx + 0.0185, gy - 0.0125, gy + 0.0125, zp1 - 0.0007, zp1, pbr(c, 'curtain', new Color3(0.02, 0.02, 0.024), 0, 0.3, 0.5));
+  } else {
+    ibox(c, node, 'gateBack', gx - 0.0185, gx + 0.0185, gy - 0.0125, gy + 0.0125, zp1 - 0.0007, zp1, chamberMat(c));
+    const rear = MeshBuilder.CreateDisc('rearElement', { radius: 0.0095, tessellation: 40 }, c.scene);
+    rear.parent = node;
+    rear.position.set(gx, gy, zp1 - 0.0009);
+    rear.material = c.mats.coatedGlass(unit.traits.haze);
+  }
+  // sprocket beside the gate, half sunk into the plate
+  const metal = pbr(c, 'sprocket', new Color3(0.6, 0.6, 0.62), 1, 0.32);
+  const spx = xr - 0.0055;
+  const spz = zf + 0.0032;
+  icyl(c, node, 'sprocket', 0.011, 0.031, 'y', spx, gy, spz, metal);
+  for (const sy of [-1, 1])
+    for (let k = -3; k <= 3; k++) {
+      const a = (k / 3) * 1.25;
+      const tooth = ibox(c, node, 'tooth', -0.0008, 0.0008, -0.0006, 0.0006, -0.0006, 0.0006, metal);
+      tooth.position.set(spx + Math.sin(a) * 0.0058, gy + sy * 0.0152, spz - Math.cos(a) * 0.0058);
+      tooth.rotation.y = -a;
+    }
+  // take-up spool
+  const spool = pbr(c, 'spool', new Color3(0.42, 0.42, 0.4), 0.2, 0.5);
+  const tx = (xr + xi1) / 2;
+  const tz = zb + 0.0135;
+  icyl(c, node, 'takeUpSpool', 0.018, yt - yb - 0.003, 'y', tx, (yb + yt) / 2, tz, spool);
+  for (const sy of [-1, 1]) icyl(c, node, 'spoolFlange', 0.023, 0.0012, 'y', tx, gy + sy * 0.0182, tz, spool);
+  ibox(c, node, 'spoolSlot', tx - 0.0012, tx + 0.0012, gy - 0.013, gy + 0.013, tz - 0.0095, tz - 0.0082, chamberMat(c));
+  // rewind fork hanging into the cassette well
+  const cx = (xi0 + xl) / 2;
+  const cz = zb + 0.0135;
+  icyl(c, node, 'rewindFork', 0.006, 0.004, 'y', cx, yt - 0.002, cz, metal);
+  for (const sx of [-1, 1]) ibox(c, node, 'forkProng', cx + sx * 0.0018 - 0.0006, cx + sx * 0.0018 + 0.0006, yt - 0.0075, yt - 0.003, cz - 0.0008, cz + 0.0008, metal);
+  // light seals around the opening
+  const rng = makeRng(hashString(`${unit.serial}-${unit.modelId}`));
+  const st = sealStyle(unit.traits.seals, false);
+  sealStrip(c, node, st, rng, 'y', yb, yt, xi0 + 0.0016, zb, 0.003, 0.0035);
+  sealStrip(c, node, st, rng, 'y', yb, yt, xi1 - 0.0016, zb, 0.003, 0.0035);
+  sealStrip(c, node, st, rng, 'x', xi0 + 0.003, xi1 - 0.003, yt - 0.0016, zb, 0.003, 0.0035);
+  sealStrip(c, node, st, rng, 'x', xi0 + 0.003, xi1 - 0.003, yb + 0.0016, zb, 0.003, 0.0035);
+  if (st === 'crumbling' || st === 'tar') {
+    const dust = pbr(c, st === 'tar' ? 'seal-tar' : 'seal-dust', st === 'tar' ? new Color3(0.045, 0.024, 0.01) : new Color3(0.2, 0.17, 0.13), 0, st === 'tar' ? 0.1 : 1, st === 'tar' ? 1 : 0);
+    for (let k = 0; k < 14; k++) {
+      const s = 0.0006 + rng() * 0.001;
+      const x = xi0 + 0.004 + rng() * (xi1 - xi0 - 0.008);
+      const z = zb + 0.002 + rng() * (cav - 0.004);
+      ibox(c, node, 'crumb', x - s, x + s, yb + 0.0006, yb + 0.0006 + s, z - s, z + s, dust);
+    }
+  }
+  // film: cassette in the well, film across the rails onto the take-up spool
+  const film = new TransformNode('film', c.scene);
+  film.parent = node;
   const label = new PBRMaterial('cassetteLabel', c.scene);
   label.albedoColor = new Color3(0.8, 0.6, 0.05);
   label.roughness = 0.35;
   label.metallic = 0.3;
-  cas.material = label;
-  const strip = MeshBuilder.CreatePlane('filmStrip', { width: w * 0.66, height: h * 0.5 }, c.scene);
-  strip.parent = node;
-  strip.position.set(0, 0, -d * 0.18);
-  strip.material = c.mats.plastic(new Color3(0.16, 0.11, 0.07), 0.25);
-  node.setEnabled(false);
-  return { node, label };
+  icyl(c, film, 'cassette', 0.023, 0.039, 'y', cx + 0.001, gy, cz, label, 32);
+  for (const sy of [-1, 1]) icyl(c, film, 'cassetteCap', 0.0235, 0.0018, 'y', cx + 0.001, gy + sy * 0.0205, cz, pbr(c, 'capBlack', new Color3(0.02, 0.02, 0.02), 0.5, 0.35));
+  ibox(c, film, 'filmStrip', cx + 0.008, tx - 0.008, gy - 0.0175, gy + 0.0175, zf - 0.0018, zf - 0.0013, filmBaseMat(c));
+  icyl(c, film, 'filmOnSpool', 0.0195, 0.035, 'y', tx, gy, tz, filmBaseMat(c));
+  film.setEnabled(false);
+  void model;
+  return { node, label, film };
+}
+
+/** 120 TLR chamber: spools top and bottom, vertical film path, felt light traps. */
+function chamberTLR(c: Ctx, unit: CameraUnit, g: { w: number; h: number; d: number; topH: number; botH: number; cav: number; endW: number }): Interior {
+  const { w, h, d, topH, botH, cav, endW } = g;
+  const node = new TransformNode('chamber', c.scene);
+  node.parent = c.root;
+  const zb = -d / 2;
+  const zs = -d / 2 + cav;
+  const zf = zb + 0.0075;
+  const yb = -h / 2 + botH;
+  const yt = h / 2 - topH;
+  const xi0 = -w / 2 + endW;
+  const xi1 = w / 2 - endW;
+  const gy = -0.022;
+  const half = 0.023;
+  lineChamber(c, node, xi0, xi1, yb, yt, zb, zs, chamberMat(c));
+  const plate = filmPlateMat(c);
+  const zp1 = zs - 0.0006;
+  ibox(c, node, 'filmPlate', xi0, -half, gy - half - 0.002, gy + half + 0.002, zf, zp1, plate);
+  ibox(c, node, 'filmPlate', half, xi1, gy - half - 0.002, gy + half + 0.002, zf, zp1, plate);
+  ibox(c, node, 'filmPlate', -half, half, gy + half, gy + half + 0.002, zf, zp1, plate);
+  ibox(c, node, 'filmPlate', -half, half, gy - half - 0.002, gy - half, zf, zp1, plate);
+  // mirror box wall above the take-up spool
+  ibox(c, node, 'mirrorWall', xi0, xi1, 0.028, yt - 0.0006, zb + 0.004, zp1, plate);
+  const rail = railMat(c);
+  for (const sx of [-1, 1]) {
+    ibox(c, node, 'outerRail', sx * 0.0305 - 0.0007, sx * 0.0305 + 0.0007, gy - half - 0.004, gy + half + 0.004, zf - 0.0012, zf, rail);
+    ibox(c, node, 'innerRail', sx * 0.0245 - 0.0006, sx * 0.0245 + 0.0006, gy - half, gy + half, zf - 0.0007, zf, rail);
+  }
+  // behind the gate: the rear of the taking lens
+  ibox(c, node, 'gateBack', -half, half, gy - half, gy + half, zp1 - 0.0007, zp1, chamberMat(c));
+  const rear = MeshBuilder.CreateDisc('rearElement', { radius: 0.014, tessellation: 48 }, c.scene);
+  rear.parent = node;
+  rear.position.set(0, gy, zp1 - 0.0009);
+  rear.material = c.mats.coatedGlass(unit.traits.haze);
+  // spools: supply at the bottom, take-up at the top
+  const spool = pbr(c, 'spool', new Color3(0.42, 0.42, 0.4), 0.2, 0.5);
+  const metal = pbr(c, 'sprocket', new Color3(0.6, 0.6, 0.62), 1, 0.32);
+  const sz = zb + 0.016;
+  const spools = [-0.056, 0.014];
+  for (const y of spools) {
+    icyl(c, node, 'spoolCore', 0.011, 0.062, 'x', 0, y, sz, spool);
+    for (const sx of [-1, 1]) {
+      icyl(c, node, 'spoolFlange', 0.022, 0.0012, 'x', sx * 0.031, y, sz, spool);
+      icyl(c, node, 'spoolHolder', 0.008, 0.005, 'x', sx * (xi1 - 0.0025), y, sz, metal);
+    }
+  }
+  // felt light traps around the door
+  const rng = makeRng(hashString(`${unit.serial}-${unit.modelId}`));
+  const st = sealStyle(unit.traits.seals, true);
+  sealStrip(c, node, st, rng, 'x', xi0 + 0.003, xi1 - 0.003, yb + 0.0016, zb, 0.003, 0.003);
+  sealStrip(c, node, st, rng, 'x', xi0 + 0.003, xi1 - 0.003, yt - 0.0016, zb, 0.003, 0.003);
+  sealStrip(c, node, st, rng, 'y', yb, yt, xi0 + 0.0016, zb, 0.003, 0.003);
+  sealStrip(c, node, st, rng, 'y', yb, yt, xi1 - 0.0016, zb, 0.003, 0.003);
+  // film: backing paper on the supply spool, across the gate, onto the take-up
+  const film = new TransformNode('film', c.scene);
+  film.parent = node;
+  const label = new PBRMaterial('backingPaper', c.scene);
+  label.albedoColor = new Color3(0.8, 0.6, 0.05);
+  label.roughness = 0.6;
+  icyl(c, film, 'rollOnSpool', 0.02, 0.061, 'x', 0, spools[0], sz, label, 32);
+  icyl(c, film, 'takeUpRoll', 0.0145, 0.061, 'x', 0, spools[1], sz, label, 32);
+  ibox(c, film, 'paperStrip', -0.0305, 0.0305, spools[0] + 0.008, spools[1] - 0.006, zf - 0.0018, zf - 0.0013, filmBaseMat(c));
+  film.setEnabled(false);
+  return { node, label, film };
+}
+
+/** Super 8 cartridge bay behind the left side door. */
+function chamberSuper8(c: Ctx, g: { w: number; bayD: number; y0: number; y1: number; z0: number; z1: number; lensY: number }): Interior {
+  const { w, bayD, y0, y1, z0, z1 } = g;
+  const node = new TransformNode('chamber', c.scene);
+  node.parent = c.root;
+  const x0 = -w / 2;
+  const x1 = -w / 2 + bayD;
+  const bay = pbr(c, 's8bay', new Color3(0.13, 0.13, 0.14), 0.6, 0.5);
+  const t = 0.0006;
+  ibox(c, node, 'bayBack', x1 - t, x1, y0, y1, z0, z1, bay);
+  ibox(c, node, 'bayTop', x0 + 0.0008, x1, y1 - t, y1, z0, z1, bay);
+  ibox(c, node, 'bayBottom', x0 + 0.0008, x1, y0, y0 + t, z0, z1, bay);
+  ibox(c, node, 'bayFront', x0 + 0.0008, x1, y0, y1, z1 - t, z1, bay);
+  ibox(c, node, 'bayRear', x0 + 0.0008, x1, y0, y1, z0, z0 + t, bay);
+  // film gate slot and the pull-down claw near the lens end
+  const metal = pbr(c, 'sprocket', new Color3(0.6, 0.6, 0.62), 1, 0.32);
+  const gz = z1 - 0.012;
+  ibox(c, node, 'gateFrame', x1 - 0.0016, x1 - t, g.lensY - 0.0045, g.lensY + 0.0045, gz - 0.005, gz + 0.005, metal);
+  ibox(c, node, 'gateSlot', x1 - 0.0018, x1 - 0.0015, g.lensY - 0.0028, g.lensY + 0.0028, gz - 0.0035, gz + 0.0035, pbr(c, 'void', new Color3(0.005, 0.005, 0.005), 0, 1));
+  ibox(c, node, 'claw', x1 - 0.0028, x1 - t, g.lensY - 0.0075, g.lensY - 0.0055, gz - 0.0045, gz - 0.0035, metal);
+  const film = new TransformNode('film', c.scene);
+  film.parent = node;
+  const label = new PBRMaterial('cartridge', c.scene);
+  label.albedoColor = new Color3(0.85, 0.62, 0.04);
+  label.roughness = 0.4;
+  ibox(c, film, 'cartridge', x0 + 0.003, x1 - 0.0012, y0 + 0.004, y1 - 0.004, z0 + 0.006, z1 - 0.004, label);
+  ibox(c, film, 'cartridgeWindow', x0 + 0.0026, x0 + 0.003, (y0 + y1) / 2 - 0.006, (y0 + y1) / 2 + 0.006, z0 + 0.02, z0 + 0.04, pbr(c, 'capBlack', new Color3(0.02, 0.02, 0.02), 0.5, 0.35));
+  film.setEnabled(false);
+  return { node, label, film };
 }
 
 export function buildCamera(scene: Scene, mats: Mats, unit: CameraUnit, lensUnit?: LensUnit): CameraRig {
@@ -226,7 +544,8 @@ function buildBox(c: Ctx, model: CameraModel, unit: CameraUnit, lensUnit?: LensU
   const r = leica ? d / 2 - 0.0005 : 0.005;
   const topH = slr ? 0.016 : trip ? 0.016 : 0.022;
   const botH = slr ? 0.008 : 0.006;
-  const sh = shell(c, w, h, d, topH, botH, r);
+  const cav = Math.min(d - 0.006, 0.0265);
+  const sh = shell(c, w, h, d, topH, botH, r, false, cav);
   const plate = sh.plate;
   const chromeAccent = mats.chrome(0.12);
 
@@ -429,32 +748,6 @@ function buildBox(c: Ctx, model: CameraModel, unit: CameraUnit, lensUnit?: LensU
   pp.parent = backDoor;
   pp.position.set((w - 0.01) / 2, (botH - topH) / 2, 0.0005);
   pp.material = mats.chrome(0.2);
-  // interior: dark film chamber visible when the door opens
-  const interior = MeshBuilder.CreatePlane('interior', { width: w - 0.012, height: h - topH - botH - 0.004 }, scene);
-  interior.parent = root;
-  interior.position.set(0, (botH - topH) / 2, -d / 2 + 0.008);
-  interior.rotation.y = Math.PI;
-  interior.material = mats.plastic(new Color3(0.012, 0.012, 0.012), 0.8);
-  interior.rotation.y = 0;
-  const gate = MeshBuilder.CreatePlane('gate', { width: 0.04, height: 0.028 }, scene);
-  gate.parent = root;
-  gate.position.set(lensX * 0.3, lensY, -d / 2 + 0.0075);
-  gate.material = mats.plastic(new Color3(0.0, 0.0, 0.0), 0.9);
-  // Light seals along hinge and latch, plus the top channel
-  const sm = sealsMaterial(c, unit.traits.seals);
-  const sealStrips: Mesh[] = [];
-  const mkSeal = (sx: number, sy: number, sw: number, sh2: number) => {
-    const s = MeshBuilder.CreateBox('seal', { width: sw, height: sh2, depth: 0.0012 }, scene);
-    s.parent = root;
-    s.position.set(sx, sy, -d / 2 + 0.0068);
-    s.material = sm;
-    if (unit.traits.seals < 0.5) s.scaling.set(1, 1, 0.5 + Math.random() * 0.8);
-    sealStrips.push(s);
-  };
-  mkSeal(-w / 2 + 0.006, (botH - topH) / 2, 0.0025, h - topH - botH - 0.006);
-  mkSeal(w / 2 - 0.006, (botH - topH) / 2, 0.0025, h - topH - botH - 0.006);
-  mkSeal(0, h / 2 - topH - 0.0015, w - 0.02, 0.002);
-
   // Battery door (on the bottom plate for metered bodies)
   let batteryDoor: TransformNode | undefined;
   if (model.meter === 'cds' || model.meter === 'ttl' || model.meter === 'auto') {
@@ -488,9 +781,8 @@ function buildBox(c: Ctx, model: CameraModel, unit: CameraUnit, lensUnit?: LensU
   }
   wearOverlay(c, [sh.top, sh.bot]);
 
-  const filmG = filmGroup(c, w, h - topH - botH, d, 0.0125);
-  const rig = makeRig(c, model, [w, h, d], lens, backDoor, -1.9, shutterButton, advance, batteryDoor, counterTex, filmG);
-  return rig;
+  const interior = () => chamber35(c, model, unit, { w, h, d, topH, botH, cav, endW: 0.006, lensX, lensY });
+  return makeRig(c, model, [w, h, d], lens, backDoor, -1.9, shutterButton, advance, batteryDoor, counterTex, interior);
 }
 
 function variant(unit: CameraUnit) {
@@ -504,7 +796,8 @@ function buildTLR(c: Ctx, model: CameraModel, unit: CameraUnit): CameraRig {
   const h = 0.142;
   const d = 0.092;
   const r = 0.006;
-  const sh = shell(c, w, h, d, 0.006, 0.006, r);
+  const cav = 0.034;
+  const sh = shell(c, w, h, d, 0.006, 0.006, r, false, cav);
   const chrome = mats.chrome(0.12);
   const boardMat = rollei ? mats.blackPaint() : mats.satinBlack();
   // Lens board (raised front plate)
@@ -597,10 +890,6 @@ function buildTLR(c: Ctx, model: CameraModel, unit: CameraUnit): CameraRig {
   door.position.set(0, (h - 0.014) / 2, -0.002);
   door.material = mats.leatherette(1, 1);
   hot(c, 'back', door);
-  const interior = MeshBuilder.CreatePlane('interior', { width: w - 0.01, height: h - 0.016 }, scene);
-  interior.parent = root;
-  interior.position.set(0, 0, -d / 2 + 0.005);
-  interior.material = mats.plastic(new Color3(0.012, 0.012, 0.012), 0.8);
   // Sling lugs
   for (const sx of [-1, 1]) {
     const lug = ring('lug', scene, 0.004, 0.0025, 0.003, 16);
@@ -610,8 +899,8 @@ function buildTLR(c: Ctx, model: CameraModel, unit: CameraUnit): CameraRig {
     lug.material = chrome;
   }
   wearOverlay(c, [sh.top, sh.bot]);
-  const filmG = filmGroup(c, w, h * 0.6, d, 0.012);
-  return makeRig(c, model, [w, h, d], take, backDoor, 1.7, shutterButton, advance, undefined, counterTex, filmG, true);
+  const interior = () => chamberTLR(c, unit, { w, h, d, topH: 0.006, botH: 0.006, cav, endW: 0.006 });
+  return makeRig(c, model, [w, h, d], take, backDoor, 1.7, shutterButton, advance, undefined, counterTex, interior, true);
 }
 
 function buildSuper8(c: Ctx, model: CameraModel, unit: CameraUnit): CameraRig {
@@ -621,11 +910,29 @@ function buildSuper8(c: Ctx, model: CameraModel, unit: CameraUnit): CameraRig {
   const h = 0.11;
   const d = 0.2;
   const bodyMat = nizo ? mats.satinBlack() : mats.aluminium();
-  const body = roundedBox('s8body', scene, w, h, d, 0.012, 5);
+  // the body is built around an open cartridge bay on the left (-X) side
+  const bayD = 0.026;
+  const bay = { y0: -h * 0.36 + 0.003, y1: h * 0.26 - 0.003, z0: -d * 0.245, z1: d * 0.245 };
+  const body = roundedBox('s8body', scene, w - bayD, h, d, 0.012, 5);
   part(c, body, bodyMat, root, 'body');
-  const side = roundedBox('s8side', scene, w + 0.002, h * 0.62, d * 0.62, 0.008, 4, 18);
+  body.position.x = bayD / 2;
+  const sideW = bayD + 0.003;
+  const sx0 = -w / 2;
+  const front = roundedBox('s8bodyFront', scene, sideW, h, d / 2 - bay.z1, 0.008, 4);
+  part(c, front, bodyMat, root, 'body');
+  front.position.set(sx0 + sideW / 2, 0, (d / 2 + bay.z1) / 2);
+  const rear = roundedBox('s8bodyRear', scene, sideW, h, d / 2 + bay.z0, 0.008, 4);
+  part(c, rear, bodyMat, root, 'body');
+  rear.position.set(sx0 + sideW / 2, 0, (-d / 2 + bay.z0) / 2);
+  const above = MeshBuilder.CreateBox('s8bodyTop', { width: sideW, height: h / 2 - bay.y1, depth: bay.z1 - bay.z0 + 0.002 }, scene);
+  part(c, above, bodyMat, root, 'body');
+  above.position.set(sx0 + sideW / 2, (h / 2 + bay.y1) / 2, 0);
+  const below = MeshBuilder.CreateBox('s8bodyBottom', { width: sideW, height: h / 2 + bay.y0, depth: bay.z1 - bay.z0 + 0.002 }, scene);
+  part(c, below, bodyMat, root, 'body');
+  below.position.set(sx0 + sideW / 2, (-h / 2 + bay.y0) / 2, 0);
+  const side = roundedBox('s8side', scene, 0.002, h * 0.62, d * 0.62, 0.0009, 2, 18);
   part(c, side, mats.leatherette(1, 1), root, 'body');
-  side.position.set(0, -h * 0.05, -d * 0.08);
+  side.position.set(w / 2 + 0.0005, -h * 0.05, -d * 0.08);
   // pistol grip
   const grip = roundedBox('grip', scene, 0.034, 0.1, 0.045, 0.014, 5, 18);
   part(c, grip, mats.leatherette(1, 1), root, 'body');
@@ -691,10 +998,9 @@ function buildSuper8(c: Ctx, model: CameraModel, unit: CameraUnit): CameraRig {
   bcap.parent = batteryDoor;
   bcap.material = mats.plastic(new Color3(0.03, 0.03, 0.03));
   hot(c, 'battery', bcap);
-  const filmG = filmGroup(c, w * 0.6, h * 0.5, d * 0.3, 0.015);
-  filmG.node.position.set(-w * 0.1, -h * 0.05, d * 0.05);
   void lm;
-  return makeRig(c, model, [w, h, d], undefined, backDoor, -1.6, trigger, undefined, batteryDoor, counterTex, filmG, false, glass);
+  const interior = () => chamberSuper8(c, { w, bayD, ...bay, lensY: h * 0.1 });
+  return makeRig(c, model, [w, h, d], undefined, backDoor, -1.6, trigger, undefined, batteryDoor, counterTex, interior, false, glass);
 }
 
 function makeRig(
@@ -708,10 +1014,27 @@ function makeRig(
   advance: TransformNode | undefined,
   batteryDoor: TransformNode | undefined,
   counterTex: DynamicTexture,
-  filmG: { node: TransformNode; label: PBRMaterial },
+  buildInterior: () => Interior,
   hingeX = false,
   extraGlass?: Mesh,
 ): CameraRig {
+  // the chamber is only built the first time the back opens, so display rigs stay light
+  let interior: Interior | null = null;
+  let stock: string | null = null;
+  const showFilm = () => {
+    if (!interior) return;
+    interior.film.setEnabled(!!stock);
+    if (!stock) return;
+    let maker = '';
+    try {
+      maker = film(stock).maker;
+    } catch {
+      /* unknown id: keep the default label */
+    }
+    if (maker) interior.label.albedoColor = maker === 'Kodak' ? new Color3(0.85, 0.62, 0.04) : maker === 'Ilford' ? new Color3(0.08, 0.08, 0.08) : maker === 'Fujifilm' ? new Color3(0.1, 0.45, 0.2) : new Color3(0.6, 0.6, 0.6);
+  };
+  const filmNode = new TransformNode('filmState', c.scene);
+  filmNode.parent = c.root;
   const baseY = shutterButton.position.y;
   const baseZ = shutterButton.position.z;
   let fireT = 0;
@@ -734,18 +1057,18 @@ function makeRig(
     advance,
     batteryDoor,
     counterTex,
-    film: filmG.node,
+    film: filmNode,
     hotspots: c.hot,
     setCounter: (n) => drawCounter(counterTex, n),
     setFilmLoaded: (stockId) => {
-      filmG.node.setEnabled(!!stockId);
-      if (stockId) {
-        const f = film(stockId);
-        const col = f.maker === 'Kodak' ? new Color3(0.85, 0.62, 0.04) : f.maker === 'Ilford' ? new Color3(0.08, 0.08, 0.08) : f.maker === 'Fujifilm' ? new Color3(0.1, 0.45, 0.2) : new Color3(0.6, 0.6, 0.6);
-        filmG.label.albedoColor = col;
-      }
+      stock = stockId;
+      showFilm();
     },
     setBackOpen: (t) => {
+      if (t > 0.01 && !interior) {
+        interior = buildInterior();
+        showFilm();
+      }
       if (hingeX) backDoor.rotation.x = t * backOpenAngle;
       else backDoor.rotation.y = t * backOpenAngle;
     },
