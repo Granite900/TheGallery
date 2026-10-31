@@ -266,9 +266,10 @@ void main(){
     game.audio.tick();
   };
   const ctxMenu = (e: Event) => e.preventDefault();
-  canvas.addEventListener('mousemove', onMouseMove);
-  canvas.addEventListener('mousedown', onDown);
-  window.addEventListener('mouseup', onUp);
+  canvas.addEventListener('pointermove', onMouseMove);
+  // pointer events: Babylon cancels pointerdown on the canvas, which suppresses the legacy mouse events
+  canvas.addEventListener('pointerdown', onDown);
+  window.addEventListener('pointerup', onUp);
   canvas.addEventListener('wheel', onWheel, { passive: true });
   canvas.addEventListener('contextmenu', ctxMenu);
 
@@ -717,9 +718,9 @@ void main(){
     scene,
     debug: { raise: toggleRaise, fire: () => fire(), wind: () => (cocked = true), settings: st, cam, keyEV, calibration },
     dispose: () => {
-      canvas.removeEventListener('mousemove', onMouseMove);
-      canvas.removeEventListener('mousedown', onDown);
-      window.removeEventListener('mouseup', onUp);
+      canvas.removeEventListener('pointermove', onMouseMove);
+      canvas.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('pointerup', onUp);
       canvas.removeEventListener('wheel', onWheel);
       canvas.removeEventListener('contextmenu', ctxMenu);
       if (document.pointerLockElement) document.exitPointerLock();
