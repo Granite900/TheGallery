@@ -34,9 +34,9 @@ export class Mats {
   /** Satin / brushed chrome with anisotropic highlights (top plates) */
   satinChrome(): PBRMaterial {
     return this.get('satinChrome', () => {
-      const m = this.base('satin', new Color3(0.86, 0.86, 0.87), 1, 0.27);
+      const m = this.base('satin', new Color3(0.78, 0.78, 0.8), 1, 0.17);
       m.anisotropy.isEnabled = true;
-      m.anisotropy.intensity = 0.7;
+      m.anisotropy.intensity = 0.85;
       const s = scaledSet(this.scene, 'scratches', 2, 2);
       m.metallicTexture = s.orm;
       m.useRoughnessFromMetallicTextureGreen = true;

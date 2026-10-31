@@ -69,13 +69,13 @@ export async function createStudio(game: Game, args: Record<string, unknown>): P
   // window in the north wall: cut by placing the frame + bright backdrop outside
   const win = windowFrame(scene, mats, 1.5, 1.35);
   win.root.position.set(0.62, 1.72, 2.47);
-  const outside = MeshBuilder.CreatePlane('outside', { width: 8, height: 5 }, scene);
-  outside.position.set(0.62, 2.0, 4.5);
+  const outside = MeshBuilder.CreatePlane('outside', { width: 34, height: 17 }, scene);
+  outside.position.set(0.62, 3.2, 14);
   const skyTex = paintOutside(scene);
   const om = mats.decal(skyTex, 1);
   om.emissiveTexture = skyTex;
   om.emissiveColor = new Color3(1, 1, 1);
-  om.emissiveIntensity = 2.6;
+  om.emissiveIntensity = 1.5;
   om.disableLighting = true;
   outside.material = om;
   // cut the wall: replace the north wall with 4 pieces around the window
@@ -509,33 +509,52 @@ function showMenu(game: Game, start: () => void) {
 }
 
 function paintOutside(scene: import('@babylonjs/core').Scene): DynamicTexture {
-  const t = new DynamicTexture('outside', { width: 1024, height: 640 }, scene, true);
+  const W = 2048;
+  const H = 1024;
+  const t = new DynamicTexture('outside', { width: W, height: H }, scene, true);
   const ctx = t.getContext() as CanvasRenderingContext2D;
-  // flat-ish sky bands
-  const sky = ['#c9dbe9', '#d3e1ea', '#dfe7ea', '#e8eae4'];
-  sky.forEach((c, i) => {
+  // soft sky with banded cloud
+  const bands = ['#bcd2e4', '#c5d8e6', '#cfdeE8', '#d8e3e9', '#e1e7e8', '#e8eae4'];
+  bands.forEach((c, i) => {
     ctx.fillStyle = c;
-    ctx.fillRect(0, i * 110, 1024, 120);
+    ctx.fillRect(0, (i * H * 0.55) / bands.length, W, (H * 0.55) / bands.length + 2);
   });
-  // rooftops across the street
-  ctx.fillStyle = '#8b9095';
-  let x = 0;
-  let seed = 3;
+  ctx.fillStyle = '#e8eae4';
+  ctx.fillRect(0, H * 0.55, W, H);
+  let seed = 7;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-  while (x < 1024) {
-    const w = 80 + rnd() * 120;
-    const hgt = 200 + rnd() * 140;
-    ctx.fillStyle = ['#9a9a95', '#8e8a84', '#a19c92', '#868b8e'][Math.floor(rnd() * 4)];
-    ctx.fillRect(x, 640 - hgt, w, hgt);
-    ctx.fillStyle = '#6d6a66';
+  for (let i = 0; i < 9; i++) {
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
     ctx.beginPath();
-    ctx.moveTo(x - 6, 640 - hgt);
-    ctx.lineTo(x + w / 2, 640 - hgt - 50 - rnd() * 30);
-    ctx.lineTo(x + w + 6, 640 - hgt);
+    ctx.ellipse(rnd() * W, 60 + rnd() * 260, 140 + rnd() * 220, 18 + rnd() * 26, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = '#c7c9c4';
-    for (let wy = 640 - hgt + 30; wy < 600; wy += 60) for (let wx = x + 14; wx < x + w - 20; wx += 34) ctx.fillRect(wx, wy, 16, 26);
-    x += w + 4;
+  }
+  // three layers of rooftops: far (pale, small) → near (darker, bigger)
+  const layers = [
+    { base: 0.66, hmin: 60, hmax: 130, wmin: 40, wmax: 90, col: ['#b9c0c6', '#b3b9bf', '#c0c4c6'], roof: '#a4abb2', win: '#cdd3d6' },
+    { base: 0.78, hmin: 110, hmax: 210, wmin: 70, wmax: 140, col: ['#a5a39c', '#9d9a93', '#aba59a', '#98a0a4'], roof: '#7f7d79', win: '#c3c6c2' },
+    { base: 0.98, hmin: 200, hmax: 330, wmin: 120, wmax: 230, col: ['#8d887f', '#958e83', '#867f77', '#8b9196'], roof: '#5e5753', win: '#b8bbb6' },
+  ];
+  for (const L of layers) {
+    let x = -20;
+    while (x < W) {
+      const w = L.wmin + rnd() * (L.wmax - L.wmin);
+      const hgt = L.hmin + rnd() * (L.hmax - L.hmin);
+      const top = H * L.base - hgt;
+      ctx.fillStyle = L.col[Math.floor(rnd() * L.col.length)];
+      ctx.fillRect(x, top, w, H - top);
+      ctx.fillStyle = L.roof;
+      ctx.beginPath();
+      ctx.moveTo(x - 4, top);
+      ctx.lineTo(x + w * 0.5, top - w * (0.25 + rnd() * 0.2));
+      ctx.lineTo(x + w + 4, top);
+      ctx.fill();
+      if (rnd() < 0.6) ctx.fillRect(x + w * (0.2 + rnd() * 0.5), top - w * 0.3, w * 0.08, w * 0.25);
+      ctx.fillStyle = L.win;
+      const ww = Math.max(6, w * 0.11);
+      for (let wy = top + hgt * 0.15; wy < H * L.base - ww * 1.6; wy += ww * 2.6) for (let wx = x + ww; wx < x + w - ww * 1.5; wx += ww * 2.2) ctx.fillRect(wx, wy, ww, ww * 1.5);
+      x += w + 2 + rnd() * 6;
+    }
   }
   t.update(true);
   return t;

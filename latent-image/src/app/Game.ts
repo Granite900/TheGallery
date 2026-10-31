@@ -25,6 +25,8 @@ export interface SceneHost {
   scene: Scene;
   dispose(): void;
   onKey?(e: KeyboardEvent, down: boolean): void;
+  /** test hooks (used by automated playthrough checks) */
+  debug?: Record<string, unknown>;
 }
 
 type SceneFactory = (game: Game, args: Record<string, unknown>) => Promise<SceneHost>;

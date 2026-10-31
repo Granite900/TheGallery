@@ -27,5 +27,6 @@ export function scanK(frameErrStops: number, speedShift: number, gamma: number, 
   const dn = midDensity(gamma, latUnder, latOver);
   const df = negDensity((frameErrStops + speedShift) * LOG10_2, gamma, latUnder, latOver);
   const used = dn + auto * (df - dn);
-  return used + 0.417;
+  // mid-grey print density 0.75 on a grade-3 scan curve (range 0.88)
+  return used + 0.88 * (0.5 + Math.log(0.35 / 0.65) / 6);
 }

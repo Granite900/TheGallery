@@ -60,14 +60,26 @@ export interface SkyParams {
   cloudiness: number;
 }
 
-export function skyPainter(p: SkyParams): Painter {
+export function skyPainter(p: SkyParams, scale = 1): Painter {
   const sd = norm(p.sunDir);
+  const inner = skyPainterRaw(p, sd);
   return (dir, u, v) => {
+    const c = inner(dir, u, v);
+    return [c[0] * scale, c[1] * scale, c[2] * scale];
+  };
+}
+
+function skyPainterRaw(p: SkyParams, sd: number[]): Painter {
+  return (dir, _u, _v) => {
     const up = dir[1];
     let c: Rgb;
     if (up > 0) {
       c = mix(p.horizon, p.zenith, Math.pow(sat(up), 0.45));
-      const clouds = fbm(u * 3, v * 2, 6, 5, 3);
+      // clouds on a flat layer overhead (no pole pinching)
+      const k = 1 / (up + 0.12);
+      const cx = dir[0] * k * 0.18;
+      const cz = dir[2] * k * 0.18;
+      const clouds = fbm(((cx % 1) + 1) % 1, ((cz % 1) + 1) % 1, 4, 5, 3);
       const cl = sat((clouds - (0.62 - p.cloudiness * 0.4)) * 3) * sat(up * 4);
       const cloudCol: Rgb = mix(p.horizon, [p.horizon[0] * 1.2, p.horizon[1] * 1.2, p.horizon[2] * 1.2], 0.5);
       c = mix(c, cloudCol, cl * 0.8);
@@ -147,4 +159,9 @@ export function skyFor(lighting: string, sunDir: number[]): SkyParams {
     default:
       return { sunDir, zenith: [0.25, 0.48, 1.1], horizon: [1.1, 1.25, 1.45], ground: [0.22, 0.19, 0.15], sun: [120, 110, 95], cloudiness: 0.25 };
   }
+}
+
+/** Sky radiance scale that balances the painted sky against the sun light */
+export function skyScale(lighting: string): number {
+  return ({ sun: 1.9, hazy: 1.7, golden: 1.4, overcast: 1.5, shade: 1.9, dusk: 0.8 } as Record<string, number>)[lighting] ?? 1.6;
 }

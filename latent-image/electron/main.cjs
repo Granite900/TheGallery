@@ -32,9 +32,26 @@ function createWindow() {
     }
   });
 
+  // Verification hook: LATENT_SNAPSHOT=out.png saves a screenshot after a delay and quits.
+  const snap = process.env.LATENT_SNAPSHOT;
+  if (snap) {
+    win.webContents.on('console-message', (e) => console.log('[page]', e.message));
+    setTimeout(async () => {
+      const img = await win.webContents.capturePage();
+      require('node:fs').writeFileSync(snap, img.toPNG());
+      app.quit();
+    }, Number(process.env.LATENT_SNAPSHOT_DELAY || 30000));
+  }
+
   const devUrl = process.env.LATENT_DEV_URL;
   if (devUrl) win.loadURL(devUrl);
-  else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), snap ? { query: { debug: '1' } } : undefined);
+  if (snap && process.env.LATENT_EVAL) {
+    win.webContents.on('did-finish-load', () => {
+      const js = `(async () => { while (!(window.__game && window.__game.current)) await new Promise(r => setTimeout(r, 200)); await new Promise(r => setTimeout(r, 1500)); ${process.env.LATENT_EVAL} })().catch(e => console.log('eval error ' + e))`;
+      win.webContents.executeJavaScript(js).catch(() => undefined);
+    });
+  }
 }
 
 app.whenReady().then(() => {

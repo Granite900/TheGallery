@@ -168,11 +168,11 @@ const GENERATORS: Record<string, () => TexData> = {
   cobbles: () =>
     build(1024, 1024, (u, v) => {
       const [f1, f2, id] = worley(u, v, 22, 41);
-      const edge = smooth(0.02, 0.18, f2 - f1);
+      const edge = smooth(0.01, 0.1, f2 - f1);
       const n = fbm(u, v, 40, 3, 44);
-      const tone = 0.22 + id * 0.12 + n * 0.05;
-      const stone: [number, number, number] = [tone, tone * 0.97, tone * 0.92];
-      const c = mixc([0.06, 0.055, 0.05], stone, edge);
+      const tone = 0.1 + id * 0.08 + n * 0.04;
+      const stone: [number, number, number] = [tone, tone * 0.96, tone * 0.9];
+      const c = mixc([0.05, 0.042, 0.032], stone, edge);
       const dome = Math.sqrt(clamp01(edge)) * (1 - f1 * 0.6);
       return { c, h: dome * 0.8 + n * 0.2, r: mix(0.95, 0.55, edge * (0.5 + id * 0.5)), ao: mix(0.35, 1, edge) };
     }, 5),

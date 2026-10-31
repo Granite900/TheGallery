@@ -208,7 +208,7 @@ float negDg(float x, float g){
 }
 // paper / scan curve: log exposure → print density (grade 2)
 float paperD(float lh){
-  float range = 1.05;
+  float range = 0.88;
   float sgm = 1.0 / (1.0 + exp(-6.0 * (lh / range - 0.5)));
   return 0.06 + (2.05 - 0.06) * sgm;
 }
@@ -463,7 +463,10 @@ export interface PrintParams {
 }
 
 function wrap(engine: AbstractEngine, name: string, fs: string, uniforms: string[], samplers: string[]): EffectWrapper {
-  return new EffectWrapper({ engine, name, fragmentShader: fs, uniformNames: uniforms, samplerNames: samplers, useShaderStore: false });
+  const w = new EffectWrapper({ engine, name, fragmentShader: fs, uniformNames: [...uniforms, 'scale'], samplerNames: samplers, useShaderStore: false });
+  // the stock post-process vertex shader scales vUV by this uniform
+  w.onApplyObservable.add(() => w.effect.setFloat2('scale', 1, 1));
+  return w;
 }
 
 async function ready(w: EffectWrapper): Promise<void> {
@@ -482,14 +485,37 @@ function asBase(engine: AbstractEngine, it: InternalTexture): BaseTexture {
 }
 
 export class FilmLab {
+  static debug = false;
+  private async stats(label: string, t: RenderTargetTexture) {
+    if (!FilmLab.debug) return;
+    const px = (await t.readPixels()) as ArrayLike<number> | null;
+    if (!px) {
+      console.log(`[lab] ${label}: no pixels`);
+      return;
+    }
+    let mn = Infinity;
+    let mx = -Infinity;
+    let sum = 0;
+    const n = Math.min(px.length, 400000);
+    for (let i = 0; i < n; i += 4) {
+      const v = Number(px[i + 1]);
+      mn = Math.min(mn, v);
+      mx = Math.max(mx, v);
+      sum += v;
+    }
+    console.log(`[lab] ${label}: ${px.constructor.name} min ${mn.toFixed(3)} max ${mx.toFixed(3)} mean ${(sum / (n / 4)).toFixed(3)}`);
+  }
   private renderer: EffectRenderer;
   private accum: EffectWrapper;
   private lens: EffectWrapper;
   private latent: EffectWrapper;
   private developW: EffectWrapper;
   private printW: EffectWrapper;
+  /** offscreen scene that owns develop/print render targets */
+  private scratch: Scene;
 
   constructor(private engine: AbstractEngine) {
+    this.scratch = new Scene(engine, { virtual: true } as never);
     this.renderer = new EffectRenderer(engine);
     this.accum = wrap(engine, 'accum', ACCUM_FS, ['weight', 'first'], ['prevTex', 'curTex']);
     this.lens = wrap(engine, 'lens', LENS_FS, ['texel', 'aspect', 'nearZ', 'farZ', 'focal', 'fstop', 'focusDist', 'frameW', 'widthPx', 'swirl', 'catsEye', 'vignette', 'soft', 'haze', 'openness', 'maxCoc'], ['colorTex', 'depthTex']);
@@ -530,7 +556,7 @@ export class FilmLab {
       samplingMode: Texture.BILINEAR_SAMPLINGMODE,
       generateDepthBuffer: true,
     });
-    color.createDepthStencilTexture(Constants.LESS, false, false, 1);
+    color.createDepthStencilTexture(0, false, false, 1);
     color.activeCamera = cam;
     color.renderList = null;
     color.renderParticles = true;
@@ -551,16 +577,22 @@ export class FilmLab {
         r.y = baseRot.y + path[i][1];
         cam.computeWorldMatrix();
       }
-      color.render();
+      // render through the scene so every per-frame setup (lights, shadows, env) runs
+      scene.customRenderTargets.push(color);
+      scene.render(false);
+      scene.customRenderTargets.splice(scene.customRenderTargets.indexOf(color), 1);
       const first = i === 0;
       this.accum.onApplyObservable.clear();
       this.accum.onApplyObservable.add(() => {
+        this.accum.effect.setFloat2('scale', 1, 1);
         this.accum.effect.setTexture('prevTex', src);
         this.accum.effect.setTexture('curTex', color);
         this.accum.effect.setFloat('weight', 1 / path.length);
         this.accum.effect.setFloat('first', first ? 1 : 0);
       });
+      await this.stats(`color ${i}`, color);
       this.renderer.render(this.accum, dst);
+      await this.stats(`accum ${i}`, dst);
       const t = src;
       src = dst;
       dst = t;
@@ -577,6 +609,7 @@ export class FilmLab {
     const optical = dst;
     this.lens.onApplyObservable.clear();
     this.lens.onApplyObservable.add(() => {
+        this.lens.effect.setFloat2('scale', 1, 1);
       const e = this.lens.effect;
       e.setTexture('colorTex', src);
       e.setTexture('depthTex', depthBase);
@@ -598,9 +631,11 @@ export class FilmLab {
       e.setFloat('maxCoc', Math.max(8, w * 0.035));
     });
     this.renderer.render(this.lens, optical);
+    await this.stats('optical', optical);
     const out = this.rtt(scene, w, h, false, 'latentOut');
     this.latent.onApplyObservable.clear();
     this.latent.onApplyObservable.add(() => {
+        this.latent.effect.setFloat2('scale', 1, 1);
       const e = this.latent.effect;
       e.setTexture('optTex', optical);
       e.setFloat('k', p.calibration);
@@ -615,6 +650,7 @@ export class FilmLab {
       e.setFloat('sceneBright', p.sceneBright);
     });
     this.renderer.render(this.latent, out);
+    await this.stats('latent', out);
     const blob = await this.readToBlob(out, w, h, 'image/jpeg', 0.93);
     color.dispose();
     accA.dispose();
@@ -633,7 +669,9 @@ export class FilmLab {
     t.activeCamera = cam;
     t.renderList = scene.meshes.filter((m) => m.isEnabled() && m.isVisible);
     t.clearColor = scene.clearColor;
-    t.render();
+    scene.customRenderTargets.push(t);
+    scene.render(false);
+    scene.customRenderTargets.splice(scene.customRenderTargets.indexOf(t), 1);
     const px = (await t.readPixels()) as Float32Array;
     t.dispose();
     let sum = 0;
@@ -656,14 +694,15 @@ export class FilmLab {
     await ready(this.developW);
     const url = URL.createObjectURL(latent);
     const tex = await new Promise<Texture>((resolve, reject) => {
-      const t: Texture = new Texture(url, engine, true, true, Texture.BILINEAR_SAMPLINGMODE, () => resolve(t), (m) => reject(new Error(String(m))));
+      const t: Texture = new Texture(url, this.scratch, true, true, Texture.BILINEAR_SAMPLINGMODE, () => resolve(t), (m) => reject(new Error(String(m))));
     });
     tex.wrapU = Texture.CLAMP_ADDRESSMODE;
     tex.wrapV = Texture.CLAMP_ADDRESSMODE;
-    const out = this.rtt(engine, w, h, false, 'devOut');
+    const out = this.rtt(this.scratch, w, h, false, 'devOut');
     const run = async (mode: number, type: string, q: number) => {
       this.developW.onApplyObservable.clear();
       this.developW.onApplyObservable.add(() => {
+        this.developW.effect.setFloat2('scale', 1, 1);
         const e = this.developW.effect;
         e.setTexture('latentTex', tex);
         e.setFloat2('texel', 1 / w, 1 / h);
@@ -714,11 +753,12 @@ export class FilmLab {
     await ready(this.printW);
     const url = URL.createObjectURL(densBlob);
     const tex = await new Promise<Texture>((resolve, reject) => {
-      const t: Texture = new Texture(url, engine, true, true, Texture.BILINEAR_SAMPLINGMODE, () => resolve(t), (m) => reject(new Error(String(m))));
+      const t: Texture = new Texture(url, this.scratch, true, true, Texture.BILINEAR_SAMPLINGMODE, () => resolve(t), (m) => reject(new Error(String(m))));
     });
-    const out = this.rtt(engine, w, h, false, 'printOut');
+    const out = this.rtt(this.scratch, w, h, false, 'printOut');
     this.printW.onApplyObservable.clear();
     this.printW.onApplyObservable.add(() => {
+        this.printW.effect.setFloat2('scale', 1, 1);
       const e = this.printW.effect;
       e.setTexture('densTex', tex);
       e.setFloat2('texel', 1 / w, 1 / h);
@@ -783,5 +823,6 @@ export class FilmLab {
     this.developW.dispose();
     this.printW.dispose();
     this.renderer.dispose();
+    this.scratch.dispose();
   }
 }

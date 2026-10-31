@@ -13,6 +13,8 @@ import { createStudio } from './scenes/StudioScene';
 import { createMarket } from './scenes/MarketScene';
 import { createShoot } from './scenes/ShootScene';
 import { createDarkroom } from './scenes/DarkroomScene';
+import { debugDevelopAll } from './app/debug';
+import { FilmLab } from './render/filmLook';
 
 async function boot() {
   const root = document.documentElement.style;
@@ -31,7 +33,11 @@ async function boot() {
   game.register('market', (g, a) => createMarket(g, a));
   game.register('shoot', (g, a) => createShoot(g, a));
   game.register('darkroom', (g, a) => createDarkroom(g, a));
-  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__game = game;
+  if (import.meta.env.DEV || new URLSearchParams(location.search).has('debug')) {
+    (window as unknown as Record<string, unknown>).__game = game;
+    (window as unknown as Record<string, unknown>).__develop = () => debugDevelopAll(game);
+    (window as unknown as Record<string, unknown>).__lab = FilmLab;
+  }
   await game.goto('menu');
   loader.style.opacity = '0';
   setTimeout(() => loader.remove(), 700);

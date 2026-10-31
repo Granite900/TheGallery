@@ -5,7 +5,7 @@
 import { CascadedShadowGenerator, Color3, DirectionalLight, MeshBuilder, PointerEventTypes, Vector3, TransformNode, DynamicTexture, Mesh, AbstractMesh, Matrix } from '@babylonjs/core';
 import type { Game, SceneHost } from '../app/Game';
 import { Mats } from '../render/materials';
-import { makeEnvironment, skyFor, skyPainter, studioPainter } from '../render/env';
+import { makeEnvironment, skyFor, skyPainter, skyScale, studioPainter } from '../render/env';
 import { makePipeline, SHADOW_SIZE } from '../render/quality';
 import { GlideCamera, Pose, V, findMeta, newScene } from './common';
 import { buildHarbour, buildPortraitRoom } from '../models/locations';
@@ -31,11 +31,15 @@ export async function createMarket(game: Game, _args: Record<string, unknown>): 
   const outdoor = venue === 'flea';
   const lighting = outdoor ? weatherFor(s.day) : 'window';
   const toSun = new Vector3(-0.55, 0.62, -0.55).normalize();
-  const env = outdoor ? await makeEnvironment(scene, skyPainter(skyFor(lighting, [toSun.x, toSun.y, toSun.z]))) : await makeEnvironment(scene, studioPainter([1, 0.2, 0], [0, 1, 0], 1));
+  const env = outdoor ? await makeEnvironment(scene, skyPainter(skyFor(lighting, [toSun.x, toSun.y, toSun.z]), skyScale(lighting))) : await makeEnvironment(scene, studioPainter([1, 0.2, 0], [0, 1, 0], 1));
   scene.environmentTexture = env;
+  scene.environmentIntensity = outdoor && lighting !== 'overcast' ? 0.45 : 0.9;
   if (outdoor) {
     const sky = scene.createDefaultSkybox(env, true, 1500, 0, false);
-    if (sky) sky.isPickable = false;
+    if (sky) {
+      sky.isPickable = false;
+      if (sky.material) sky.material.fogEnabled = false;
+    }
   }
   const sun = new DirectionalLight('sun', outdoor ? toSun.scale(-1) : new Vector3(-1, -0.45, 0.1).normalize(), scene);
   sun.intensity = outdoor ? (lighting === 'overcast' ? 0.6 : 4.5) : 3.5;

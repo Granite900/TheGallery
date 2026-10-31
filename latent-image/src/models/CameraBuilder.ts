@@ -90,7 +90,8 @@ function engrave(c: Ctx, text: string | string[], w: number, h: number, x: numbe
       p.position.z -= e;
       break;
     case 'top':
-      p.rotation.x = Math.PI / 2;
+      // reads correctly when the camera faces you (lens toward the viewer)
+      p.rotation.set(Math.PI / 2, Math.PI, 0);
       p.position.y += e;
       break;
     case 'right':
@@ -774,7 +775,7 @@ function makeRig(
     },
     dispose: () => {
       c.scene.onBeforeRenderObservable.remove(obs);
-      c.root.dispose(false, true);
+      c.root.dispose(false, false);
     },
   };
   return rig;

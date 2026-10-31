@@ -6,7 +6,7 @@
 import { CascadedShadowGenerator, Color3, Color4, DirectionalLight, Effect, HemisphericLight, Matrix, MeshBuilder, PBRMaterial, PostProcess, Ray, RenderTargetTexture, Scene, UniversalCamera, Vector3, Constants, AbstractMesh, Camera, Viewport } from '@babylonjs/core';
 import type { Game, SceneHost } from '../app/Game';
 import { Mats } from '../render/materials';
-import { makeEnvironment, skyPainter, skyFor, studioPainter } from '../render/env';
+import { makeEnvironment, skyPainter, skyFor, skyScale, studioPainter } from '../render/env';
 import { makePipeline, SHADOW_SIZE } from '../render/quality';
 import { FilmLab } from '../render/filmLook';
 import { newScene } from './common';
@@ -53,9 +53,10 @@ export async function createShoot(game: Game, args: Record<string, unknown>): Pr
   // ---------- light & sky ----------
   let env;
   if (outdoor) {
-    env = await makeEnvironment(scene, skyPainter(skyFor(lighting, [toSun.x, toSun.y, toSun.z])));
+    env = await makeEnvironment(scene, skyPainter(skyFor(lighting, [toSun.x, toSun.y, toSun.z]), skyScale(lighting)));
     const sky = scene.createDefaultSkybox(env, true, 1500, 0, false);
     if (sky) {
+      if (sky.material) sky.material.fogEnabled = false;
       sky.isPickable = false;
       sky.metadata = { noSubject: true };
       sky.infiniteDistance = true;
@@ -64,7 +65,7 @@ export async function createShoot(game: Game, args: Record<string, unknown>): Pr
     env = await makeEnvironment(scene, studioPainter([1, 0.2, 0], [0, 1, 0], lighting === 'room' ? 0.3 : 1));
   }
   scene.environmentTexture = env;
-  scene.environmentIntensity = outdoor ? (lighting === 'dusk' ? 1.0 : 1.0) : lighting === 'room' ? 0.35 : 1.0;
+  scene.environmentIntensity = outdoor ? (lighting === 'dusk' ? 1.0 : lighting === 'overcast' ? 0.9 : 0.42) : lighting === 'room' ? 0.35 : 1.0;
   const sun = new DirectionalLight('sun', toSun.scale(-1), scene);
   const sunI: Record<string, number> = { sun: 5.5, hazy: 4.2, overcast: 0.5, shade: 5.5, golden: 3.6, dusk: 0.0, window: 4.0, room: 0.6 };
   sun.intensity = sunI[lighting];
@@ -91,9 +92,9 @@ export async function createShoot(game: Game, args: Record<string, unknown>): Pr
   if (outdoor) {
     scene.fogMode = Scene.FOGMODE_EXP2;
     const fogCol = skyFor(lighting, [0, 1, 0]).horizon;
-    const fs = lighting === 'dusk' ? 0.25 : 0.55;
+    const fs = skyScale(lighting) * 0.45;
     scene.fogColor = new Color3(fogCol[0] * fs, fogCol[1] * fs, fogCol[2] * fs);
-    scene.fogDensity = lighting === 'overcast' || lighting === 'hazy' ? 0.006 : 0.0025;
+    scene.fogDensity = lighting === 'overcast' || lighting === 'hazy' ? 0.0035 : 0.0011;
   }
 
   // ---------- location ----------
@@ -714,6 +715,7 @@ void main(){
 
   const host: SceneHost = {
     scene,
+    debug: { raise: toggleRaise, fire: () => fire(), wind: () => (cocked = true), settings: st, cam, keyEV, calibration },
     dispose: () => {
       canvas.removeEventListener('mousemove', onMouseMove);
       canvas.removeEventListener('mousedown', onDown);

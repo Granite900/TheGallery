@@ -228,7 +228,7 @@ export function buildLens(scene: Scene, mats: Mats, model: LensModel, opts: { ha
     setAperture,
     setFocus,
     setHaze,
-    dispose: () => root.dispose(false, true),
+    dispose: () => root.dispose(false, false),
   };
 }
 

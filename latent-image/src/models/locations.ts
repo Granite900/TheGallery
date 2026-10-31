@@ -8,6 +8,7 @@ import { Mats } from '../render/materials';
 import { cyl, lathe, roundedBox, textTexture } from './geom';
 import { door as doorProp, windowFrame, chair as chairProp, plant as plantProp, rug as rugProp, room as roomProp, table as tableProp } from './props';
 import { makeRng, range as rrange } from '../sim/rng';
+import earcut from 'earcut';
 
 export interface Collider {
   min: [number, number];
@@ -58,7 +59,7 @@ function house(scene: Scene, mats: Mats, w: number, h: number, d: number, color:
   // roof prism
   const roofH = 1.6 + r() * 1.2;
   const shape = [new Vector3(-w / 2 - 0.25, 0, 0), new Vector3(w / 2 + 0.25, 0, 0), new Vector3(0, roofH, 0)];
-  const roof = MeshBuilder.ExtrudePolygon('roof', { shape: shape.map((p) => new Vector3(p.x, p.z, p.y)), depth: d + 0.5, sideOrientation: Mesh.DOUBLESIDE }, scene);
+  const roof = MeshBuilder.ExtrudePolygon('roof', { shape: shape.map((p) => new Vector3(p.x, p.z, p.y)), depth: d + 0.5, sideOrientation: Mesh.DOUBLESIDE }, scene, earcut);
   roof.rotation.x = -Math.PI / 2;
   roof.position.set(0, h, -d / 2 - 0.25);
   roof.parent = parent;
@@ -317,7 +318,7 @@ export function buildHarbour(scene: Scene, mats: Mats, o: LocOpts): LocationBuil
   const edge = box(scene, 'quayEdge', 120, 2.6, 1.2, mats.textured('quayStone', 30, 1), 0, -1.2, -8.4, root);
   void edge;
   const water = MeshBuilder.CreateGround('water', { width: 400, height: 300, subdivisions: 4 }, scene);
-  water.position.set(0, -1.6, -160);
+  water.position.set(0, -0.95, -160);
   water.parent = root;
   const wm = mats.textured('water', 60, 45, new Color3(0.5, 0.75, 0.8), 0.6, 1);
   wm.roughness = 1;
@@ -365,7 +366,7 @@ export function buildHarbour(scene: Scene, mats: Mats, o: LocOpts): LocationBuil
   names.forEach((n, bi) => {
     const g = new TransformNode('boatG', scene);
     g.parent = root;
-    g.position.set(-14 + bi * 9.5, -1.35, -11.5 - (bi % 2) * 2.5);
+    g.position.set(-14 + bi * 9.5, -0.72, -11.5 - (bi % 2) * 2.5);
     g.rotation.y = 0.15 * (bi % 2 ? 1 : -1);
     boat(scene, mats, cols[bi % cols.length], n, g);
     boats.push(g);
@@ -395,7 +396,7 @@ export function buildHarbour(scene: Scene, mats: Mats, o: LocOpts): LocationBuil
   for (const m of root.getChildMeshes()) m.receiveShadows = true;
   const tick = (t: number) => {
     boats.forEach((b, bi) => {
-      b.position.y = -1.35 + Math.sin(t * 0.9 + bi) * 0.06;
+      b.position.y = -0.72 + Math.sin(t * 0.9 + bi) * 0.06;
       b.rotation.z = Math.sin(t * 0.7 + bi * 2) * 0.025;
     });
     gulls.forEach((g) => {
