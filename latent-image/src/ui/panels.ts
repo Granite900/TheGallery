@@ -9,6 +9,7 @@ import { testPlan } from '../sim/testing';
 import { Lighting, LIGHTING_LABEL, sunny16 } from '../sim/exposure';
 import { Check, checkLabel } from '../sim/inspection';
 import { makeRng } from '../sim/rng';
+import { openPhonePanel } from './phonePanel';
 
 export function unitTitle(u: CameraUnit): string {
   const m = camera(u.modelId);
@@ -248,6 +249,7 @@ export function outingPanel(game: Game, go: (where: string, lighting: Lighting) 
   if (s.chapter >= 1 || s.sandbox) {
     sheet.append(h('hr'), h('div', { class: 'flex' }, h('div', { style: 'width:160px' }, h('div', { style: 'font-family:var(--font-label);font-weight:600' }, s.chapter === 3 && !s.cameras.some((c) => c.modelId === 'yashicad') ? 'Estate sale' : 'Saturday market'), h('div', { class: 'small' }, 'Cameras, lenses, expired film. Next week has different stock.')), btn('Go', market)));
   }
+  sheet.append(h('hr'), h('div', { class: 'flex' }, h('div', { style: 'width:160px' }, h('div', { style: 'font-family:var(--font-label);font-weight:600' }, 'The real world'), h('div', { class: 'small' }, 'Take one of your cameras out for real, on your phone.')), btn('Pair phone', () => openPhonePanel(game))));
   sheet.append(h('div', { style: 'margin-top:12px' }, btn('Stay in', () => (sheet.parentElement as HTMLElement & { close?: () => void })?.close?.(), 'red')));
   return sheet;
 }
@@ -261,7 +263,7 @@ export function settingsPanel(game: Game, onQuitToMenu?: () => void): HTMLElemen
   const vol = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(s.settings.volume), oninput: (e: Event) => ((s.settings.volume = Number((e.target as HTMLInputElement).value)), game.audio.setVolume(s.settings.volume), game.save()) });
   sheet.append(h('div', { class: 'grid2' }, h('span', { class: 'label' }, 'Graphics'), q, h('span', { class: 'label' }, 'Assistance'), a, h('span', { class: 'label' }, '35mm roll length'), rl, h('span', { class: 'label' }, 'Volume'), vol));
   sheet.append(h('p', { class: 'small', style: 'margin-top:10px' }, 'F11 toggles fullscreen.'));
-  const row = h('div', { style: 'margin-top:12px' }, btn('Back', () => (sheet.parentElement as HTMLElement & { close?: () => void })?.close?.()));
+  const row = h('div', { style: 'margin-top:12px' }, btn('Back', () => (sheet.parentElement as HTMLElement & { close?: () => void })?.close?.()), btn('Phone camera', () => openPhonePanel(game), 'blue'));
   if (onQuitToMenu) row.append(btn('Main menu', onQuitToMenu, 'red'));
   sheet.append(row);
   return sheet;

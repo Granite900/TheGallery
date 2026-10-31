@@ -1,7 +1,10 @@
 // Desktop shell for Latent Image. Loads the Vite build (or the dev server
 // when LATENT_DEV_URL is set) in a plain window with no menu bar.
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('node:path');
+const { startPhoneServer } = require('./phoneServer.cjs');
+
+let mainWindow = null;
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -15,10 +18,15 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
+      preload: path.join(__dirname, 'preload.cjs'),
       backgroundThrottling: false,
     },
   });
   win.removeMenu();
+  mainWindow = win;
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null;
+  });
 
   // F11 fullscreen, Ctrl+Shift+I devtools (menu is removed so wire them here).
   win.webContents.on('before-input-event', (event, input) => {
@@ -55,6 +63,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  startPhoneServer({ userDataDir: app.getPath('userData'), getWindow: () => mainWindow, ipcMain });
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

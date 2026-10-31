@@ -1,3 +1,9 @@
 node_modules/
 dist/
 release/
+dist-phone/
+android/app/build/
+android/.gradle/
+android/build/
+android/local.properties
+android/app/src/main/assets/public/

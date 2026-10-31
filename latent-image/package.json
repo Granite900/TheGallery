@@ -11,18 +11,27 @@
     "preview": "vite preview",
     "test": "vitest run",
     "app": "vite build && electron .",
-    "app:dev": "LATENT_DEV_URL=http://localhost:5173 electron ."
+    "app:dev": "LATENT_DEV_URL=http://localhost:5173 electron .",
+    "build:phone": "vite build --config vite.phone.config.ts",
+    "dev:phone": "vite --config vite.phone.config.ts --port 5174",
+    "android:sync": "npm run build:phone && npx cap sync android"
   },
   "dependencies": {
     "@babylonjs/core": "^9.33.1",
     "@babylonjs/materials": "^9.33.1",
+    "@capacitor/core": "^8.6.0",
     "@fontsource/courier-prime": "^5.3.0",
     "@fontsource/jost": "^5.3.0",
     "@fontsource/reenie-beanie": "^5.3.0",
-    "earcut": "^3.2.4"
+    "earcut": "^3.2.4",
+    "jsqr": "^1.4.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/cli": "^8.6.0",
     "@types/earcut": "^3.0.0",
+    "@types/qrcode": "^1.5.6",
     "electron": "^45.2.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",

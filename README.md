@@ -48,3 +48,13 @@ Other scripts:
 npm run build     # type-check + production build to dist/
 npm run preview   # serve the production build
 ```
+
+## Also in this repo: Latent Image
+
+`latent-image/` is a separate game about collecting, testing and developing
+old film cameras, with an Android companion app that turns your phone into
+the cameras you own. See [latent-image/README.md](latent-image/README.md).
+
+```bash
+cd latent-image && npm install && npm run app
+```

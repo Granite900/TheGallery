@@ -390,6 +390,49 @@ void main(){
   gl_FragColor = vec4(toSRGB(lin), 1.0);
 }`;
 
+
+const PHOTO_FS = /* glsl */ `${COMMON}
+uniform sampler2D photoTex;
+uniform vec2 texel;
+uniform float aspect;
+uniform float vignette;
+uniform float soft;
+uniform float haze;
+uniform float openness;
+vec3 lin(vec3 c){ return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
+vec3 expand(vec3 c){
+  // undo the phone's highlight roll-off a little so bright skies keep detail
+  vec3 l = lin(c);
+  return l / max(vec3(1.0) - l * 0.82, vec3(0.08));
+}
+void main(){
+  vec2 p = (vUV - 0.5) * vec2(aspect, 1.0);
+  float rad = length(p) / (0.5 * length(vec2(aspect, 1.0)));
+  vec3 col = expand(texture2D(photoTex, vUV).rgb);
+  float r = soft * openness * (0.4 + 1.6 * rad * rad);
+  if (r > 0.3) {
+    vec3 sum = col;
+    for (int i = 0; i < 12; i++) {
+      float a = float(i) * 2.39996;
+      float rr = sqrt((float(i) + 0.5) / 12.0) * r;
+      sum += expand(texture2D(photoTex, vUV + vec2(cos(a), sin(a)) * rr * texel).rgb);
+    }
+    col = sum / 13.0;
+  }
+  if (haze > 0.01) {
+    vec3 wide = vec3(0.0);
+    for (int i = 0; i < 24; i++) {
+      float a = float(i) * 0.2618;
+      float rr = 0.04 + 0.06 * fract(float(i) * 0.618);
+      wide += expand(texture2D(photoTex, vUV + vec2(cos(a), sin(a) * aspect) * rr).rgb);
+    }
+    wide /= 24.0;
+    col = col * (1.0 - 0.35 * haze) + wide * 0.75 * haze + max(wide - 1.0, 0.0) * haze * 0.6;
+  }
+  col *= clamp(1.0 - vignette * openness * rad * rad * 0.85, 0.2, 1.0);
+  gl_FragColor = vec4(col, 1.0);
+}`;
+
 export interface CaptureParams {
   width: number;
   height: number;
@@ -511,6 +554,7 @@ export class FilmLab {
   private latent: EffectWrapper;
   private developW: EffectWrapper;
   private printW: EffectWrapper;
+  private photoW: EffectWrapper;
   /** offscreen scene that owns develop/print render targets */
   private scratch: Scene;
 
@@ -527,6 +571,7 @@ export class FilmLab {
       ['texel', 'process', 'mode', 'gamma', 'crossover', 'latUnder', 'latOver', 'speedShift', 'baseFog', 'fog', 'grain', 'grainScale', 'uneven', 'surge', 'underfix', 'drying', 'dust', 'lightFog', 'backFog', 'kink', 'kinkPos', 'seed', 'scanK', 'palette', 'saturation', 'slideShift', 'reversed', 'blank', 'halation', 'colorShift', 'aspect'],
       ['latentTex'],
     );
+    this.photoW = wrap(engine, 'photo', PHOTO_FS, ['texel', 'aspect', 'vignette', 'soft', 'haze', 'openness'], ['photoTex']);
     this.printW = wrap(engine, 'print', PRINT_FS, ['texel', 'logExpo', 'range', 'dev', 'blur', 'stripCount', 'stripStart', 'stripStep', 'apFactor', 'paperK', 'dodge', 'burn', 'fixed_', 'seed', 'colorPrint'], ['densTex']);
   }
 
@@ -690,6 +735,64 @@ export class FilmLab {
     return Math.pow(2, sum / Math.max(wsum, 1e-6));
   }
 
+
+  /**
+   * Turn a real photograph (sRGB JPEG from the phone, auto-exposed so mid
+   * grey sits near 18 %) into a latent image with the emulated camera's
+   * exposure error, lens character and faults.
+   */
+  async latentFromPhoto(photo: Blob, p: Omit<CaptureParams, 'width' | 'height' | 'focalMm' | 'fStop' | 'focusDist' | 'frameWidthMm' | 'swirl' | 'catsEye' | 'shakePath' | 'calibration'>): Promise<{ blob: Blob; w: number; h: number }> {
+    await Promise.all([ready(this.photoW), ready(this.latent)]);
+    const url = URL.createObjectURL(photo);
+    const tex = await new Promise<Texture>((resolve, reject) => {
+      const t: Texture = new Texture(url, this.scratch, true, true, Texture.BILINEAR_SAMPLINGMODE, () => resolve(t), (m) => reject(new Error(String(m))));
+    });
+    tex.wrapU = Texture.CLAMP_ADDRESSMODE;
+    tex.wrapV = Texture.CLAMP_ADDRESSMODE;
+    const size = tex.getSize();
+    const scale = Math.min(1, 1080 / Math.max(size.width, size.height));
+    const w = Math.round(size.width * scale);
+    const h = Math.round(size.height * scale);
+    const optical = this.rtt(this.scratch, w, h, true, 'photoOpt');
+    this.photoW.onApplyObservable.clear();
+    this.photoW.onApplyObservable.add(() => {
+      const e = this.photoW.effect;
+      e.setFloat2('scale', 1, 1);
+      e.setTexture('photoTex', tex);
+      e.setFloat2('texel', 1 / w, 1 / h);
+      e.setFloat('aspect', w / h);
+      e.setFloat('vignette', p.vignette);
+      e.setFloat('soft', p.softWideOpen * 1.6);
+      e.setFloat('haze', p.haze);
+      e.setFloat('openness', p.openness);
+    });
+    this.renderer.render(this.photoW, optical);
+    const out = this.rtt(this.scratch, w, h, false, 'photoLatent');
+    this.latent.onApplyObservable.clear();
+    this.latent.onApplyObservable.add(() => {
+      const e = this.latent.effect;
+      e.setFloat2('scale', 1, 1);
+      e.setTexture('optTex', optical);
+      e.setFloat('k', 1);
+      e.setFloat('expo', Math.pow(2, p.exposureStops));
+      e.setFloat('capping', p.capping);
+      e.setFloat('cappingDir', p.cappingDir);
+      e.setFloat('leak', p.leak);
+      e.setFloat2('leakPos', p.leakPos[0], p.leakPos[1]);
+      e.setFloat('leakWidth', 0.05 + 0.1 * (p.seed % 1));
+      e.setFloat('seed', p.seed);
+      e.setFloat('colorFilm', p.colorFilm ? 1 : 0);
+      e.setFloat('sceneBright', p.sceneBright);
+    });
+    this.renderer.render(this.latent, out);
+    const blob = await this.readToBlob(out, w, h, 'image/jpeg', 0.93);
+    optical.dispose();
+    out.dispose();
+    tex.dispose();
+    URL.revokeObjectURL(url);
+    return { blob, w, h };
+  }
+
   async develop(engine: AbstractEngine, latent: Blob, w: number, h: number, p: DevelopParams): Promise<{ neg: Blob; pos: Blob; dens: Blob }> {
     await ready(this.developW);
     const url = URL.createObjectURL(latent);
@@ -822,6 +925,7 @@ export class FilmLab {
     this.latent.dispose();
     this.developW.dispose();
     this.printW.dispose();
+    this.photoW.dispose();
     this.renderer.dispose();
     this.scratch.dispose();
   }

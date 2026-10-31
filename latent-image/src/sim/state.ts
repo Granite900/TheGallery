@@ -69,6 +69,8 @@ export interface Roll {
   devSetup?: DevSetup;
   /** report filed for the unit this roll tested */
   reportFiled?: boolean;
+  /** real photographs shot with the phone companion */
+  phone?: boolean;
 }
 
 export interface PrintRecord {

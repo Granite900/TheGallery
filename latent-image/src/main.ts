@@ -14,6 +14,7 @@ import { createMarket } from './scenes/MarketScene';
 import { createShoot } from './scenes/ShootScene';
 import { createDarkroom } from './scenes/DarkroomScene';
 import { debugDevelopAll } from './app/debug';
+import { initPhoneLink } from './app/phoneLink';
 import { FilmLab } from './render/filmLook';
 
 async function boot() {
@@ -38,6 +39,7 @@ async function boot() {
     (window as unknown as Record<string, unknown>).__develop = () => debugDevelopAll(game);
     (window as unknown as Record<string, unknown>).__lab = FilmLab;
   }
+  initPhoneLink(game);
   await game.goto('menu');
   loader.style.opacity = '0';
   setTimeout(() => loader.remove(), 700);

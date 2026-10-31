@@ -1,0 +1,12 @@
+{
+  "appId": "com.latentimage.camera",
+  "appName": "Latent Image Camera",
+  "webDir": "dist-phone",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  },
+  "plugins": {
+    "CapacitorHttp": { "enabled": true }
+  }
+}

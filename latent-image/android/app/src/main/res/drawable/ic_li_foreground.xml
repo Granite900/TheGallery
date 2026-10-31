@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Latent Image Camera: a cream rangefinder on a dark ground -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- top plate -->
+    <path android:fillColor="#ECE3CF" android:pathData="M30,42 h48 a4,4 0 0 1 4,4 v4 h-56 v-4 a4,4 0 0 1 4,-4 z"/>
+    <!-- body -->
+    <path android:fillColor="#ECE3CF" android:pathData="M26,50 h56 v20 a4,4 0 0 1 -4,4 h-48 a4,4 0 0 1 -4,-4 z"/>
+    <!-- shutter button and rewind knob -->
+    <path android:fillColor="#ECE3CF" android:pathData="M68,38 h6 v4 h-6 z M34,39 h8 v3 h-8 z"/>
+    <!-- leatherette band -->
+    <path android:fillColor="#1B1813" android:pathData="M26,54 h56 v2 h-56 z"/>
+    <!-- lens -->
+    <path android:fillColor="#1B1813" android:pathData="M54,62 m-11,0 a11,11 0 1 0 22,0 a11,11 0 1 0 -22,0"/>
+    <path android:fillColor="#ECE3CF" android:pathData="M54,62 m-7,0 a7,7 0 1 0 14,0 a7,7 0 1 0 -14,0"/>
+    <path android:fillColor="#7A2318" android:pathData="M54,62 m-4,0 a4,4 0 1 0 8,0 a4,4 0 1 0 -8,0"/>
+    <!-- viewfinder window -->
+    <path android:fillColor="#1B1813" android:pathData="M32,44 h8 v4 h-8 z"/>
+</vector>

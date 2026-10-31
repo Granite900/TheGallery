@@ -170,7 +170,7 @@ function frameNotes(game: Game, roll: Roll, f: FrameRecord): HTMLElement {
   const lensName = m.lensId ? lensModel(m.lensId).name : '';
   d.append(
     h('div', { class: 'label', style: 'color:#d9c99c' }, `Frame ${f.idx + 1}`),
-    h('div', null, `${LIGHTING_LABEL[m.lighting]} at ${m.location}`),
+    h('div', null, `${LIGHTING_LABEL[m.lighting]} · ${m.location}`),
     h('div', null, `${formatAperture(m.aperture)} · ${formatSpeed(m.marked)} · focus ${m.focusDist > 500 ? '∞' : m.focusDist.toFixed(1) + ' m'}`),
     h('div', null, `${lensName}${m.focal ? ` (${Math.round(m.focal)}mm)` : ''}`),
     h('div', null, m.usedMeter ? 'Exposed by the camera\'s meter' : 'Exposed manually'),
