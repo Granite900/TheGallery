@@ -1,0 +1,29 @@
+{
+  "name": "latent-image",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Collect, test and develop old film cameras.",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "app": "vite build && electron .",
+    "app:dev": "LATENT_DEV_URL=http://localhost:5173 electron ."
+  },
+  "dependencies": {
+    "@babylonjs/core": "^9.33.1",
+    "@babylonjs/materials": "^9.33.1",
+    "@fontsource/courier-prime": "^5.3.0",
+    "@fontsource/jost": "^5.3.0",
+    "@fontsource/reenie-beanie": "^5.3.0"
+  },
+  "devDependencies": {
+    "electron": "^45.2.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}
